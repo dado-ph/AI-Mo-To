@@ -4,3 +4,5 @@ coverage/
 .DS_Store
 *.log
 *.tsbuildinfo
+apps/desktop/release/
+apps/desktop/release-installer/
