@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-mo-to.dev/schemas/v1/proposal-record.schema.json",
+  "title": "AI-Mo-To Proposal Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "proposalId", "workspaceId", "baseRevision", "changeSet", "changeSetDigest", "status", "createdAt"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "proposalId": { "type": "string", "format": "uuid" },
+    "workspaceId": { "type": "string", "minLength": 1 },
+    "baseRevision": { "type": "integer", "minimum": 0 },
+    "changeSet": { "$ref": "https://ai-mo-to.dev/schemas/v1/change-set.schema.json" },
+    "changeSetDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "status": { "enum": ["pending", "approved", "rejected", "applied", "stale"] },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "1.0.0",
+  "moduleId": "ai-mo-to.habit-tracker",
+  "name": "Habit Tracker",
+  "version": "0.1.0",
+  "trustTier": "local-generated",
+  "handler": {
+    "runtime": "node",
+    "entrypoint": "dist/handler.js"
+  },
+  "collections": [
+    {
+      "id": "habit-entry",
+      "schema": {
+        "type": "object",
+        "required": ["habitId", "completedAt"]
+      }
+    }
+  ],
+  "views": [
+    {
+      "id": "habit-list",
+      "kind": "list",
+      "collection": "habit-entry"
+    },
+    {
+      "id": "habit-form",
+      "kind": "form",
+      "collection": "habit-entry"
+    }
+  ],
+  "commands": [
+    {
+      "id": "log-habit"
+    }
+  ],
+  "events": [
+    {
+      "id": "habit-logged"
+    }
+  ],
+  "capabilities": [
+    "data.habit-entry.write"
+  ],
+  "migrations": []
+}
+

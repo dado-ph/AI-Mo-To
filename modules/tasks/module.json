@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "1.0.0",
+  "moduleId": "aimoto.tasks",
+  "name": "Tasks",
+  "version": "0.1.0",
+  "trustTier": "core",
+  "collections": [
+    {
+      "id": "task",
+      "schema": "schemas/task.schema.json",
+      "key": "taskId",
+      "indexes": ["status", "dueAt", "updatedAt"]
+    }
+  ],
+  "views": [
+    {
+      "id": "task-list",
+      "kind": "list",
+      "declaration": "views/task-list.view.json"
+    },
+    {
+      "id": "task-form",
+      "kind": "form",
+      "declaration": "views/task-form.view.json"
+    }
+  ],
+  "commands": [
+    { "id": "create", "inputSchema": "schemas/task.schema.json" },
+    { "id": "complete" }
+  ],
+  "events": [
+    { "id": "created" },
+    { "id": "completed" }
+  ],
+  "capabilities": ["data.task.read", "data.task.propose"],
+  "migrations": []
+}

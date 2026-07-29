@@ -1,0 +1,74 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+import {
+  canonicalJson,
+  digestChangeSet,
+  hasMatchingChangeSetDigest,
+  validateProtocol,
+  type ChangeSet,
+  type ProtocolSchema
+} from "../src/index.js";
+
+const repositoryRoot = resolve(import.meta.dirname, "../../..");
+
+async function fixture(path: string): Promise<unknown> {
+  const content = await readFile(resolve(repositoryRoot, "fixtures/protocol", path), "utf8");
+  return JSON.parse(content) as unknown;
+}
+
+describe("protocol conformance fixtures", () => {
+  const validFixtures: Array<[ProtocolSchema, string]> = [
+    ["workspace-manifest", "valid/workspace.json"],
+    ["module-manifest", "valid/module.json"],
+    ["change-set", "valid/change-set.json"],
+    ["proposal-record", "valid/proposal-record.json"],
+    ["approval-record", "valid/approval-record.json"],
+    ["json-envelope", "valid/json-envelope.json"]
+  ];
+
+  it.each(validFixtures)("accepts the %s fixture", async (schema, path) => {
+    const result = validateProtocol(schema, await fixture(path));
+    expect(result.errors).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+
+  it("rejects an unpinned workspace module", async () => {
+    const result = validateProtocol(
+      "workspace-manifest",
+      await fixture("invalid/workspace-unpinned-module.json")
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+
+  it("requires error envelopes to exclude data", () => {
+    const result = validateProtocol("json-envelope", {
+      envelopeVersion: "1.0.0",
+      ok: false,
+      command: "apply",
+      traceId: "32d9999f-3703-48cb-8736-f4546697a21c",
+      data: {},
+      error: {
+        code: "ProposalStale",
+        message: "The workspace revision changed."
+      }
+    });
+    expect(result.valid).toBe(false);
+  });
+
+  it("canonicalizes object keys and binds the exact ChangeSet bytes", async () => {
+    expect(canonicalJson({ zebra: [true, null], alpha: { b: 2, a: 1 } }))
+      .toBe('{"alpha":{"a":1,"b":2},"zebra":[true,null]}');
+
+    const changeSet = await fixture("valid/change-set.json") as ChangeSet;
+    const digest = digestChangeSet(changeSet);
+    expect(digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(hasMatchingChangeSetDigest(changeSet, digest)).toBe(true);
+    expect(hasMatchingChangeSetDigest(
+      { ...changeSet, baseRevision: changeSet.baseRevision + 1 },
+      digest
+    )).toBe(false);
+  });
+});

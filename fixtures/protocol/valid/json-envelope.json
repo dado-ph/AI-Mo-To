@@ -1,0 +1,12 @@
+{
+  "envelopeVersion": "1.0.0",
+  "ok": true,
+  "command": "inspect",
+  "traceId": "32d9999f-3703-48cb-8736-f4546697a21c",
+  "data": {
+    "workspaceId": "default-workspace",
+    "revision": 0,
+    "health": "ok"
+  }
+}
+

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@ai-mo-to/protocol": ["packages/protocol/src/index.ts"],
+      "@ai-mo-to/storage": ["packages/storage/src/index.ts"],
+      "@ai-mo-to/engine": ["packages/engine/src/index.ts"]
+    },
+    "target": "ES2023",
+    "composite": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
+  }
+}

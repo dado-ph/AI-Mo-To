@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-mo-to.dev/schemas/v1/json-envelope.schema.json",
+  "title": "AI-Mo-To CLI JSON Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelopeVersion", "ok", "command", "traceId"],
+  "properties": {
+    "envelopeVersion": { "const": "1.0.0" },
+    "ok": { "type": "boolean" },
+    "command": { "type": "string", "minLength": 1 },
+    "traceId": { "type": "string", "format": "uuid" },
+    "data": true,
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "InvalidInput",
+            "WorkspaceNotFound",
+            "ProposalStale",
+            "ApprovalRequired",
+            "CapabilityDenied",
+            "ValidationFailed",
+            "HostFailure",
+            "InternalError"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "details": { "type": "object" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "ok": { "const": true } },
+        "required": ["ok"]
+      },
+      "then": {
+        "required": ["data"],
+        "properties": { "data": true },
+        "not": {
+          "type": "object",
+          "required": ["error"],
+          "properties": { "error": true }
+        }
+      },
+      "else": {
+        "required": ["error"],
+        "properties": { "error": true },
+        "not": {
+          "type": "object",
+          "required": ["data"],
+          "properties": { "data": true }
+        }
+      }
+    }
+  ]
+}

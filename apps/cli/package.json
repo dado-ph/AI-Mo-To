@@ -1,0 +1,19 @@
+{
+  "name": "@ai-mo-to/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "aimoto": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "aimoto": "node --disable-warning=ExperimentalWarning dist/bin.js"
+  },
+  "dependencies": {
+    "@ai-mo-to/engine": "workspace:*",
+    "@ai-mo-to/protocol": "workspace:*"
+  }
+}
