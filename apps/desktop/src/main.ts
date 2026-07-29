@@ -1,4 +1,7 @@
 import type { WorkspaceInspection } from "@ai-mo-to/engine";
+import { WorkspaceEngine } from "@ai-mo-to/engine";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import type { DesktopApi } from "./contracts.js";
 
 /** Minimal Electron-shaped API. Kept structural so the domain code stays testable without Electron. */
@@ -43,4 +46,33 @@ export async function openDesktopWindow(
     webPreferences: { contextIsolation: true, sandbox: true, preload: paths.preload }
   });
   await window.loadFile(paths.renderer);
+}
+
+interface ElectronApplication {
+  whenReady(): Promise<void>;
+  on(event: "activate" | "window-all-closed", listener: () => void): void;
+  quit(): void;
+}
+
+interface ElectronRuntime extends ElectronMainRuntime { app: ElectronApplication; }
+
+/** Starts the real Electron app while preserving a small, testable boundary around Electron itself. */
+export async function launchDesktop(): Promise<void> {
+  const require = createRequire(import.meta.url);
+  const runtime = require("electron") as ElectronRuntime;
+  const engine = new WorkspaceEngine();
+  await runtime.app.whenReady();
+  registerDesktopIpc(runtime, engine);
+  const preload = fileURLToPath(new URL("./preload.js", import.meta.url));
+  const renderer = fileURLToPath(new URL("./renderer.html", import.meta.url));
+  await openDesktopWindow(runtime, { preload, renderer });
+  runtime.app.on("activate", () => { void openDesktopWindow(runtime, { preload, renderer }); });
+  runtime.app.on("window-all-closed", () => { if (process.platform !== "darwin") runtime.app.quit(); });
+}
+
+if (process.versions.electron) {
+  void launchDesktop().catch((error: unknown) => {
+    console.error("AI-Mo-To desktop could not start.", error);
+    process.exitCode = 1;
+  });
 }

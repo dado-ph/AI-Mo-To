@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   Foundry,
   FoundryProposalConversionError,
+  createHabitTrackerBundle,
+  createHabitTrackerFoundry,
+  createHabitTrackerPlan,
   digestBundle,
   proposalToModuleInstallChangeSet,
   verifyStagedModule,
@@ -38,6 +41,22 @@ const bundle: GeneratedModuleBundle = {
 };
 
 describe("Foundry staging", () => {
+  it("generates the same locally validated Habit Tracker bundle for the no-key agent proof", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "aimoto-habit-proof-"));
+    const first = createHabitTrackerBundle();
+    const second = createHabitTrackerBundle();
+    expect(digestBundle(first.files)).toBe(digestBundle(second.files));
+
+    const staged = await createHabitTrackerFoundry(path.join(root, "staging")).stage(
+      { requestId: "request-local-habit-proof", workspaceId: "workspace-1", text: "Track meditation" },
+      createHabitTrackerPlan("request-local-habit-proof"),
+    );
+    expect(staged).toMatchObject({
+      ok: true,
+      proposal: { kind: "install-generated", module: { moduleId: "local.habit-tracker" } },
+    });
+  });
+
   it("stages Habit Tracker without mutating the active workspace", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "aimoto-foundry-"));
     const activeWorkspace = path.join(root, "active");

@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@ai-mo-to/engine": "workspace:*",
+    "@ai-mo-to/foundry": "workspace:*",
     "@ai-mo-to/protocol": "workspace:*"
   }
 }

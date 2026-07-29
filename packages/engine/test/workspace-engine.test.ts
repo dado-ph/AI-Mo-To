@@ -113,6 +113,10 @@ describe("WorkspaceEngine", () => {
     await expect(engine.invokeModule({ root, moduleId: "aimoto.files", contextRef: limited, command: "write", input: null, host, requiredAuthority: "execute", now }))
       .rejects.toMatchObject({ code: "AuthorityExceeded" });
 
+    const ungranted = await engine.mintContext({ root, moduleId: "aimoto.files", now });
+    await expect(engine.invokeModule({ root, moduleId: "aimoto.files", contextRef: ungranted, command: "network", input: null, host, requiredCapabilities: ["network.example.read"], now }))
+      .rejects.toMatchObject({ code: "CapabilityDenied" });
+
     const fault = await engine.mintContext({ root, moduleId: "aimoto.files", now });
     await expect(engine.invokeModule({ root, moduleId: "aimoto.files", contextRef: fault, command: "read", input: null, host: { invoke: async () => { throw new Error("child exited"); } }, now }))
       .rejects.toMatchObject({ code: "ModuleHostFault" });
@@ -248,5 +252,49 @@ describe("WorkspaceEngine", () => {
       kind: "restore-as-new-revision", baseRevision: 0, targetRevision: 1
     });
     expect((await engine.inspectWorkspace(root)).revision).toBe(0);
+  });
+
+  it("restores a verified snapshot only through a digest-bound approval and retains revision history", async () => {
+    const root = await temporaryWorkspace();
+    const engine = new WorkspaceEngine();
+    const workspace = await engine.createWorkspace({ root, name: "Recoverable Workspace" });
+    const snapshot = await engine.createSnapshot(root);
+    const changed = await engine.createProposal({
+      root,
+      proposalId: "2c598c7f-1aef-4f6d-aecf-b6c4dc71410e",
+      changeSet: {
+        schemaVersion: "1.0.0", changeSetId: "9f4a3d8e-7ca7-4e80-95ee-e00ca44f1d7f",
+        workspaceId: workspace.workspaceId, baseRevision: 0, createdAt: "2026-07-29T00:00:00.000Z",
+        operations: [{ operationId: "enable-build", kind: "workspace.set-authority-mode", input: { authorityMode: "build" }, preconditions: [], effects: ["workspace.settings.write"], reversibility: "reversible" }],
+      },
+    });
+    await engine.approveProposal({ root, approval: {
+      schemaVersion: "1.0.0", approvalId: "a2bc5d47-ecf7-4b8a-af4c-096b27f32964", proposalId: changed.proposalId,
+      workspaceId: workspace.workspaceId, baseRevision: 0, changeSetDigest: changed.changeSetDigest, approvedAt: "2026-07-29T00:01:00.000Z",
+    }});
+    const restore = await engine.createSnapshotRestoreProposal({ root, snapshotId: snapshot.snapshotId, proposalId: "d3a1e979-2ae6-4af4-bd0e-6e67058df4f5" });
+    expect(restore.changeSet).toMatchObject({ baseRevision: 1, operations: [expect.objectContaining({ kind: "workspace.restore-snapshot", input: expect.objectContaining({ snapshotId: snapshot.snapshotId }) })] });
+    const recovered = await engine.approveProposal({ root, approval: {
+      schemaVersion: "1.0.0", approvalId: "e45546d9-6e17-424c-b18d-47a0eaf70d0f", proposalId: restore.proposalId,
+      workspaceId: workspace.workspaceId, baseRevision: 1, changeSetDigest: restore.changeSetDigest, approvedAt: "2026-07-29T00:02:00.000Z",
+    }});
+    expect(recovered).toMatchObject({ revision: 2, authorityMode: "suggest" });
+    const store = new (await import("@ai-mo-to/storage")).WorkspaceStore(workspaceDatabasePath(root));
+    try { expect(store.listRevisions().map((entry) => entry.revision)).toEqual([0, 1, 2]); } finally { store.close(); }
+  });
+
+  it("rejects a stale restore approval without changing the workspace", async () => {
+    const root = await temporaryWorkspace();
+    const engine = new WorkspaceEngine();
+    const workspace = await engine.createWorkspace({ root, name: "Stale Recovery" });
+    const snapshot = await engine.createSnapshot(root);
+    const restore = await engine.createSnapshotRestoreProposal({ root, snapshotId: snapshot.snapshotId, proposalId: "a1dc3b3c-3aa5-4446-98da-b9f6cbc60ff9" });
+    const advance = await engine.createProposal({ root, proposalId: "7e4c7f65-5a5e-4b87-9efa-ecc70cdd1c58", changeSet: {
+      schemaVersion: "1.0.0", changeSetId: "7581cad4-daf6-4b97-8ca9-f72ea0a62047", workspaceId: workspace.workspaceId, baseRevision: 0, createdAt: "2026-07-29T00:00:00.000Z",
+      operations: [{ operationId: "advance", kind: "workspace.set-authority-mode", input: { authorityMode: "assist" }, preconditions: [], effects: ["workspace.settings.write"], reversibility: "reversible" }],
+    }});
+    await engine.approveProposal({ root, approval: { schemaVersion: "1.0.0", approvalId: "5e2c723a-706c-4bc8-9c32-c6f0c7de5e08", proposalId: advance.proposalId, workspaceId: workspace.workspaceId, baseRevision: 0, changeSetDigest: advance.changeSetDigest, approvedAt: "2026-07-29T00:01:00.000Z" } });
+    await expect(engine.approveProposal({ root, approval: { schemaVersion: "1.0.0", approvalId: "71844b69-2b6e-4fca-b593-7a75d83df667", proposalId: restore.proposalId, workspaceId: workspace.workspaceId, baseRevision: 0, changeSetDigest: restore.changeSetDigest, approvedAt: "2026-07-29T00:02:00.000Z" } })).rejects.toMatchObject({ code: "ProposalStale" });
+    await expect(engine.inspectWorkspace(root)).resolves.toMatchObject({ revision: 1, authorityMode: "assist" });
   });
 });

@@ -26,12 +26,11 @@
   ],
   "commands": [
     { "id": "create", "inputSchema": "schemas/task.schema.json" },
-    { "id": "complete" }
+    { "id": "update", "inputSchema": "schemas/task.schema.json" },
+    { "id": "complete" },
+    { "id": "reopen" }
   ],
-  "events": [
-    { "id": "created" },
-    { "id": "completed" }
-  ],
+  "events": [{ "id": "created" }, { "id": "updated" }, { "id": "completed" }, { "id": "reopened" }],
   "capabilities": ["data.task.read", "data.task.propose"],
   "migrations": []
 }

@@ -136,7 +136,10 @@ console.log(restore.kind, restore.targetRevision); // restore-as-new-revision, 2
 
 `CreatedSnapshot` includes `snapshotId`, path, and manifest. `verifySnapshot`
 returns `{ valid, errors, manifest? }`; `planRestore` returns a plan but never
-applies it. There is no snapshot CLI command.
+applies it. For an approved restore, call
+`WorkspaceEngine.createSnapshotRestoreProposal`, review the returned proposal,
+then approve its exact ChangeSet digest. The CLI equivalent is
+`aimoto snapshot restore-propose <snapshot-id>` followed by `aimoto apply`.
 
 ## Module host and SDK (library only)
 

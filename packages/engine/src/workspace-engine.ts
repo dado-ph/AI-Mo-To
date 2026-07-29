@@ -28,6 +28,7 @@ import {
   createSnapshot,
   listSnapshots,
   planRestore,
+  readVerifiedWorkspaceManifest,
   verifySnapshot,
   type CreatedSnapshot,
   type RestorePlan,
@@ -72,6 +73,8 @@ export interface InvokeModuleInput {
   input: ModuleJsonValue;
   host: ModuleHostClient;
   requiredAuthority?: AuthorityMode;
+  /** Every named capability must be explicitly granted in the workspace manifest. */
+  requiredCapabilities?: readonly string[];
   now?: () => Date;
 }
 
@@ -90,6 +93,7 @@ export interface WorkspaceInspection {
   createdAt: string;
   modules: WorkspaceManifest["modules"];
   authorityMode: WorkspaceManifest["authorityMode"];
+  capabilities: WorkspaceManifest["capabilities"];
   layout: WorkspaceManifest["layout"];
   health: "ok";
 }
@@ -104,6 +108,13 @@ export interface CreateProposalInput {
 export interface ApproveProposalInput {
   root: string;
   approval: ApprovalRecord;
+}
+
+export interface CreateSnapshotRestoreProposalInput {
+  root: string;
+  snapshotId: string;
+  proposalId: string;
+  now?: () => Date;
 }
 
 async function bundleFiles(directory: string, relative = ""): Promise<Array<{ path: string; content: Uint8Array }>> {
@@ -206,7 +217,11 @@ function assertApproval(approval: unknown): asserts approval is ApprovalRecord {
   }
 }
 
-function applyOperations(current: WorkspaceManifest, changeSet: ChangeSet): WorkspaceManifest {
+function applyOperations(
+  current: WorkspaceManifest,
+  changeSet: ChangeSet,
+  restoredManifests = new Map<string, WorkspaceManifest>(),
+): WorkspaceManifest {
   let next: WorkspaceManifest = structuredClone(current);
   for (const operation of changeSet.operations) {
     if (operation.kind === "workspace.set-authority-mode") {
@@ -236,9 +251,42 @@ function applyOperations(current: WorkspaceManifest, changeSet: ChangeSet): Work
       continue;
     }
 
+    if (operation.kind === "workspace.restore-snapshot") {
+      const restored = restoredManifests.get(operation.operationId);
+      if (!restored) {
+        throw new EngineError("ValidationFailed", "The restore operation was not verified before approval.");
+      }
+      if (restored.workspaceId !== current.workspaceId) {
+        throw new EngineError("ValidationFailed", "The snapshot belongs to a different workspace.");
+      }
+      // Keep the local identity stable. WorkspaceStore assigns the new revision
+      // inside the same approval transaction, preserving every old revision.
+      next = { ...restored, workspaceId: current.workspaceId, createdAt: current.createdAt };
+      continue;
+    }
+
     throw new EngineError("ValidationFailed", `Unsupported ChangeSet operation: ${operation.kind}.`);
   }
   return next;
+}
+
+async function verifiedRestoreManifests(root: string, changeSet: ChangeSet): Promise<Map<string, WorkspaceManifest>> {
+  const resolved = new Map<string, WorkspaceManifest>();
+  for (const operation of changeSet.operations) {
+    if (operation.kind !== "workspace.restore-snapshot") continue;
+    const snapshotId = operation.input.snapshotId;
+    const manifestDigest = operation.input.workspaceManifestDigest;
+    if (typeof snapshotId !== "string" || typeof manifestDigest !== "string") {
+      throw new EngineError("ValidationFailed", "A restore operation must name its snapshot and captured manifest digest.");
+    }
+    const restored = await readVerifiedWorkspaceManifest(join(root, ".aimoto", "snapshots"), snapshotId);
+    if (restored.manifestDigest !== manifestDigest) {
+      throw new EngineError("ValidationFailed", "The snapshot no longer contains the manifest bound to this restore proposal.");
+    }
+    assertManifest(restored.manifest);
+    resolved.set(operation.operationId, restored.manifest);
+  }
+  return resolved;
 }
 
 async function prepareModuleBundles(root: string, changeSet: ChangeSet): Promise<void> {
@@ -313,6 +361,11 @@ export class WorkspaceEngine {
     if (AUTHORITY_RANK[required] > AUTHORITY_RANK[grant.authorityCeiling] || AUTHORITY_RANK[required] > AUTHORITY_RANK[workspace.authorityMode]) {
       throw new EngineError("AuthorityExceeded", "The requested operation exceeds the monotonic authority ceiling.");
     }
+    const granted = new Set(workspace.capabilities.map((grant) => grant.capability));
+    const denied = (input.requiredCapabilities ?? []).filter((capability) => !granted.has(capability));
+    if (denied.length > 0) {
+      throw new EngineError("CapabilityDenied", "The requested operation requires a capability that this workspace has not granted.", { denied });
+    }
     grant.remainingOperations -= 1;
     try {
       return await input.host.invoke({ context_ref: input.contextRef, command: input.command, input: input.input });
@@ -366,6 +419,44 @@ export class WorkspaceEngine {
     const root = resolve(rootInput);
     const workspace = await this.inspectWorkspace(root);
     return planRestore(join(root, ".aimoto", "snapshots"), snapshotId, workspace.revision);
+  }
+
+  /** Stages a restore as an ordinary, exact-digest ChangeSet. It does not mutate the workspace. */
+  async createSnapshotRestoreProposal(input: CreateSnapshotRestoreProposalInput): Promise<ProposalRecord> {
+    const root = resolve(input.root);
+    const workspace = await this.inspectWorkspace(root);
+    const restore = await this.planSnapshotRestore(root, input.snapshotId);
+    if (restore.workspaceId !== workspace.workspaceId) {
+      throw new EngineError("ValidationFailed", "The snapshot belongs to a different workspace.");
+    }
+    const changeSet: ChangeSet = {
+      schemaVersion: SCHEMA_VERSION,
+      changeSetId: randomUUID(),
+      workspaceId: workspace.workspaceId,
+      baseRevision: workspace.revision,
+      createdAt: (input.now ?? (() => new Date()))().toISOString(),
+      operations: [{
+        operationId: "workspace-restore-snapshot",
+        kind: "workspace.restore-snapshot",
+        input: {
+          snapshotId: input.snapshotId,
+          workspaceManifestDigest: restore.manifest.workspaceManifest.digest,
+          sourceRevision: restore.sourceRevision,
+        },
+        preconditions: [
+          { kind: "workspace.revision", value: workspace.revision },
+          { kind: "snapshot.manifest-digest", value: input.snapshotId },
+        ],
+        effects: ["workspace.restore"],
+        reversibility: "compensatable",
+      }],
+    };
+    return this.createProposal({
+      root,
+      changeSet,
+      proposalId: input.proposalId,
+      ...(input.now ? { now: input.now } : {}),
+    });
   }
   async createWorkspace(
     input: CreateWorkspaceInput
@@ -475,6 +566,7 @@ export class WorkspaceEngine {
         createdAt: fileManifest.createdAt,
         modules: fileManifest.modules,
         authorityMode: fileManifest.authorityMode,
+        capabilities: fileManifest.capabilities,
         layout: fileManifest.layout,
         health: "ok"
       };
@@ -545,6 +637,7 @@ export class WorkspaceEngine {
         throw new EngineError("ValidationFailed", "The approval does not bind the staged workspace revision.");
       }
       await prepareModuleBundles(root, changeSet);
+      const restoreManifests = await verifiedRestoreManifests(root, changeSet);
 
       let manifest: WorkspaceManifest;
       try {
@@ -554,7 +647,7 @@ export class WorkspaceEngine {
           approvalId: input.approval.approvalId,
           principalId: input.approval.approvedBy ?? "local-user",
           approvedAt: input.approval.approvedAt,
-          transformManifest: (current, stagedChangeSet) => applyOperations(current, stagedChangeSet as ChangeSet)
+          transformManifest: (current, stagedChangeSet) => applyOperations(current, stagedChangeSet as ChangeSet, restoreManifests)
         });
       } catch (error) {
         if (error instanceof ProposalCommitError) {

@@ -10,6 +10,7 @@ export type EngineErrorCode =
   | "ContextExpired"
   | "OperationBudgetExceeded"
   | "AuthorityExceeded"
+  | "CapabilityDenied"
   | "ModuleNotInstalled"
   | "ModuleHostFault"
   | "InternalError";

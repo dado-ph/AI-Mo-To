@@ -34,12 +34,21 @@ record credential *binding keys* only. This is not a full secret-management or
 sandboxing system. Review generated module code and its requested capabilities
 before approving it.
 
+Recovery is also an approval operation. `snapshot restore-propose` verifies the
+snapshot, binds its ID and captured workspace-manifest digest into a pending
+ChangeSet, and leaves the current workspace alone. `apply` writes the captured
+workspace configuration as the next revision only when that exact proposal and
+its base revision still match. Earlier revisions remain in SQLite's revision
+history; recovery is not a database rollback.
+
 ## Current limitations
 
 - No desktop shell or approval UI is implemented.
 - CLI planning only changes authority mode; it cannot stage foundry output,
   install a module, create snapshots, restore, or run modules.
-- Snapshot restore only returns a plan; it never applies one.
+- Snapshot recovery restores the captured workspace configuration, not a full
+  filesystem backup or external credentials. Keep ordinary backups for files
+  and exports.
 - Foundry requires caller-provided selector, generator, validator, and activator
   hooks. It has no built-in model provider or registry.
 - Capabilities are recorded/requested data in this slice; no capability-grant

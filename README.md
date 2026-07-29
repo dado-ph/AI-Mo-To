@@ -2,14 +2,11 @@
 
 AI-Mo-To is a work-in-progress tool for making small, local workspaces safely.
 
-Today, you can use it to create a workspace on your computer, propose one
-setting change, approve that exact change, and see the workspace move to a new
-revision. It is a proof that changes can be visible and approved before they
-take effect.
-
-It is not a finished desktop app yet. There is no graphical interface, no
-published npm package, and no command that generates a Habit Tracker for you.
-Those pieces are being built around the working local core.
+Today, you can create a local workspace, use the desktop shell to inspect it,
+ask the built-in local agent workflow for a Habit Tracker, review its exact
+proposal, approve its installation, and recover a saved workspace configuration
+through the same approval path. This is still an early local-first product, but
+the core loop is now real rather than a diagram.
 
 ## Start here
 
@@ -32,9 +29,14 @@ It takes you through this complete loop:
 4. Approve the exact proposal.
 5. Confirm that the workspace has a new revision.
 
+For the full product proof, use `agent habit plan` to stage a Habit Tracker,
+then create a snapshot and use `snapshot restore-propose` followed by `apply`
+to recover it as a new revision. The command reference includes each step.
+
 ## What is in this repository?
 
-- `apps/cli` is the command-line program you can use today.
+- `apps/cli` is the command-line program and agent-facing workflow you can use today.
+- `apps/desktop` is the local Electron shell for selecting and inspecting workspaces.
 - `packages` contains the local building blocks: workspace state, proposals,
   snapshots, generated-module staging, and module hosting.
 - `modules` contains the built-in Files and Tasks examples.

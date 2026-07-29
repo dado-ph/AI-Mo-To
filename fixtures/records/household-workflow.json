@@ -1,0 +1,10 @@
+{
+  "name": "Saturday household reset",
+  "files": [
+    { "fileId": "file-lease", "name": "Lease renewal.pdf", "relativePath": "house/Lease renewal.pdf", "kind": "file", "size": 48219, "updatedAt": "2026-07-29T09:00:00.000Z" }
+  ],
+  "tasks": [
+    { "taskId": "task-call-landlord", "title": "Call landlord about the lease", "status": "open", "dueAt": "2026-08-01T09:00:00.000Z", "createdAt": "2026-07-29T09:00:00.000Z", "updatedAt": "2026-07-29T09:00:00.000Z", "version": 0 },
+    { "taskId": "task-buy-bulbs", "title": "Buy hallway light bulbs", "status": "done", "dueAt": null, "createdAt": "2026-07-29T09:05:00.000Z", "updatedAt": "2026-07-29T10:00:00.000Z", "version": 1 }
+  ]
+}

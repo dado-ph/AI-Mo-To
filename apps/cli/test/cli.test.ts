@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -174,5 +174,69 @@ describe("aimoto CLI", () => {
     const plan = capture();
     await runCli(["snapshot", "restore-plan", snapshotId, "--workspace", "snapshot", "--json"], plan.io, { cwd });
     expect(JSON.parse(plan.stdout[0] ?? "")).toMatchObject({ data: { kind: "restore-as-new-revision", targetRevision: 1 } });
+  });
+
+  it("requires review and exact approval before applying a snapshot restore", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["workspace", "create", "Restore CLI", "--root", "restore", "--json"], capture().io, { cwd });
+    const created = capture();
+    await runCli(["snapshot", "create", "--workspace", "restore", "--json"], created.io, { cwd });
+    const snapshotId = JSON.parse(created.stdout[0] ?? "").data.snapshotId;
+    const change = capture();
+    await runCli(["plan", "--workspace", "restore", "--set-authority", "build", "--json"], change.io, { cwd });
+    const changeProposal = JSON.parse(change.stdout[0] ?? "").data;
+    await runCli(["apply", "--workspace", "restore", "--proposal", changeProposal.proposalId, "--hash", changeProposal.changeSetDigest, "--json"], capture().io, { cwd });
+    const proposed = capture();
+    expect(await runCli(["snapshot", "restore-propose", snapshotId, "--workspace", "restore", "--json"], proposed.io, { cwd })).toBe(0);
+    const restore = JSON.parse(proposed.stdout[0] ?? "").data;
+    expect(restore).toMatchObject({ status: "pending", baseRevision: 1, changeSet: { operations: [expect.objectContaining({ kind: "workspace.restore-snapshot" })] } });
+    const applied = capture();
+    expect(await runCli(["apply", "--workspace", "restore", "--proposal", restore.proposalId, "--hash", restore.changeSetDigest, "--json"], applied.io, { cwd })).toBe(0);
+    expect(JSON.parse(applied.stdout[0] ?? "")).toMatchObject({ data: { revision: 2, authorityMode: "suggest" } });
+  });
+
+  it("takes a plain-language Habit Tracker request through review, exact approval, and installation", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["workspace", "create", "Habit Proof", "--root", "habits", "--json"], capture().io, { cwd });
+
+    const planned = capture();
+    expect(await runCli([
+      "agent", "habit", "plan", "--workspace", "habits",
+      "--request", "I want to track meditation every day", "--json",
+    ], planned.io, { cwd })).toBe(0);
+    const proposal = JSON.parse(planned.stdout[0] ?? "").data;
+    expect(proposal).toMatchObject({
+      request: "I want to track meditation every day",
+      plan: { displayName: "Habit Tracker" },
+      stagedModule: { moduleId: "local.habit-tracker", digest: expect.stringMatching(/^sha256:/) },
+      proposal: { status: "pending", baseRevision: 0 },
+    });
+    expect(proposal.plan.views).toEqual(expect.arrayContaining([{ id: "daily-check-in", kind: "form" }]));
+
+    const rejected = capture();
+    expect(await runCli([
+      "apply", "--workspace", "habits", "--proposal", proposal.proposal.proposalId,
+      "--hash", `sha256:${"0".repeat(64)}`, "--json",
+    ], rejected.io, { cwd })).toBe(2);
+
+    const applied = capture();
+    expect(await runCli([
+      "apply", "--workspace", "habits", "--proposal", proposal.proposal.proposalId,
+      "--hash", proposal.proposal.changeSetDigest, "--json",
+    ], applied.io, { cwd })).toBe(0);
+    const installed = JSON.parse(applied.stdout[0] ?? "");
+    expect(installed).toMatchObject({ data: { revision: 1 } });
+    expect(installed.data.modules.some((module: { moduleId: string }) => module.moduleId === "local.habit-tracker")).toBe(true);
+    await access(join(cwd, "habits", ".aimoto", "modules", "local", proposal.stagedModule.digest.slice(7), "module.json"));
+  });
+
+  it("renders a human-readable Habit Tracker review", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["workspace", "create", "Human Habit Proof", "--root", "human-habits"], capture().io, { cwd });
+    const output = capture();
+    expect(await runCli(["agent", "habit", "plan", "--workspace", "human-habits"], output.io, { cwd })).toBe(0);
+    expect(output.stdout[0]).toContain("Habit Tracker is ready for your review.");
+    expect(output.stdout[0]).toContain("Exact digest:");
+    expect(output.stdout[0]).toContain("Approve it with:");
   });
 });

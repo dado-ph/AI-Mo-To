@@ -62,6 +62,27 @@ export interface SnapshotVerification {
   readonly manifest?: SnapshotManifest;
 }
 
+/**
+ * Reads the captured workspace manifest only after verifying the complete
+ * snapshot. Callers use this to materialize a restore proposal; they should
+ * still bind the returned snapshot id and object digest in their ChangeSet.
+ */
+export async function readVerifiedWorkspaceManifest(
+  root: string,
+  snapshotId: string,
+): Promise<{ readonly manifest: unknown; readonly manifestDigest: string; readonly snapshot: SnapshotManifest }> {
+  const verification = await verifySnapshot(root, snapshotId);
+  if (!verification.valid || !verification.manifest) {
+    throw new Error(`Snapshot verification failed: ${verification.errors.join("; ")}`);
+  }
+  const content = await readFile(join(root, "objects", verification.manifest.workspaceManifest.digest));
+  return {
+    manifest: JSON.parse(content.toString("utf8")) as unknown,
+    manifestDigest: verification.manifest.workspaceManifest.digest,
+    snapshot: verification.manifest,
+  };
+}
+
 export interface RestorePlan {
   readonly kind: "restore-as-new-revision";
   readonly snapshotId: string;

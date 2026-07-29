@@ -13,6 +13,11 @@ import {
   type ChangeSet,
   type JsonEnvelope
 } from "@ai-mo-to/protocol";
+import {
+  createHabitTrackerFoundry,
+  createHabitTrackerPlan,
+  proposalToModuleInstallChangeSet,
+} from "@ai-mo-to/foundry";
 
 export interface CliIo {
   stdout(message: string): void;
@@ -83,8 +88,23 @@ function usage(): string {
     "  aimoto snapshot list [--workspace <path>] [--json]",
     "  aimoto snapshot inspect <snapshot-id> [--workspace <path>] [--json]",
     "  aimoto snapshot restore-plan <snapshot-id> [--workspace <path>] [--json]",
+    "  aimoto snapshot restore-propose <snapshot-id> [--workspace <path>] [--json]",
+    '  aimoto agent habit plan --workspace <path> [--request "what you need"] [--json]',
     "  aimoto plan --workspace <path> --set-authority <mode> [--json]",
     "  aimoto apply --workspace <path> --proposal <id> --hash <digest> [--principal <id>] [--json]"
+  ].join("\n");
+}
+
+function renderHabitTrackerPlan(result: { request: string; proposal: { proposalId: string; changeSetDigest: string; changeSet: ChangeSet } }): string {
+  const operation = result.proposal.changeSet.operations[0];
+  return [
+    "Habit Tracker is ready for your review.",
+    `Request: ${result.request}`,
+    "It will add: habits, daily check-ins, and completion history.",
+    `It requests: ${(operation?.effects ?? []).map((effect) => effect.replace("capability.request:", "")).join(", ") || "no extra capabilities"}.`,
+    `Proposal: ${result.proposal.proposalId}`,
+    `Exact digest: ${result.proposal.changeSetDigest}`,
+    "Approve it with: aimoto apply --workspace <path> --proposal <id> --hash <digest>",
   ].join("\n");
 }
 
@@ -127,13 +147,40 @@ export async function runCli(
       command = `snapshot.${action ?? "unknown"}`;
       if (action === "create") result = await engine.createSnapshot(root);
       else if (action === "list") result = await engine.listSnapshots(root);
-      else if (action === "inspect" || action === "restore-plan") {
+      else if (action === "inspect" || action === "restore-plan" || action === "restore-propose") {
         const snapshotId = args[2];
         if (!snapshotId || snapshotId.startsWith("--")) throw new EngineError("InvalidInput", `snapshot ${action} requires a snapshot id.`);
         result = action === "inspect"
           ? await engine.inspectSnapshot(root, snapshotId)
-          : await engine.planSnapshotRestore(root, snapshotId);
-      } else throw new EngineError("InvalidInput", "snapshot requires create, list, inspect, or restore-plan.");
+          : action === "restore-plan"
+            ? await engine.planSnapshotRestore(root, snapshotId)
+            : await engine.createSnapshotRestoreProposal({ root, snapshotId, proposalId: randomUUID() });
+      } else throw new EngineError("InvalidInput", "snapshot requires create, list, inspect, restore-plan, or restore-propose.");
+    } else if (args[0] === "agent" && args[1] === "habit" && args[2] === "plan") {
+      command = "agent.habit.plan";
+      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const request = option(args, "--request") ?? "Add a Habit Tracker";
+      if (!request.trim()) throw new EngineError("InvalidInput", "agent habit plan requires a non-empty request.");
+      const workspace = await engine.inspectWorkspace(root);
+      const foundry = createHabitTrackerFoundry(resolve(root, ".aimoto", "foundry", "staging"));
+      const requestId = randomUUID();
+      const plan = createHabitTrackerPlan(requestId);
+      const staged = await foundry.stage({ requestId, workspaceId: workspace.workspaceId, text: request }, plan);
+      if (!staged.ok) {
+        throw new EngineError("ValidationFailed", "Habit Tracker staging did not pass local checks.", { diagnostics: staged.diagnostics });
+      }
+      if (staged.proposal.kind !== "install-generated") {
+        throw new EngineError("ValidationFailed", "Habit Tracker must be a locally generated module.");
+      }
+      const changeSet = proposalToModuleInstallChangeSet(staged.proposal, {
+        workspaceId: workspace.workspaceId,
+        baseRevision: workspace.revision,
+        changeSetId: randomUUID(),
+        operationId: "install-habit-tracker",
+        createdAt: new Date().toISOString(),
+      });
+      const proposal = await engine.createProposal({ root, changeSet, proposalId: randomUUID() });
+      result = { request, plan: staged.proposal.plan, stagedModule: staged.proposal.module, proposal };
     } else if (args[0] === "plan") {
       command = "plan";
       const root = resolve(cwd, option(args, "--workspace") ?? ".");
@@ -195,6 +242,8 @@ export async function runCli(
     io.stdout(
       wantsJson
         ? JSON.stringify(envelope(command, traceId, { data: result }))
+        : command === "agent.habit.plan"
+          ? renderHabitTrackerPlan(result as { request: string; proposal: { proposalId: string; changeSetDigest: string; changeSet: ChangeSet } })
         : "workspaceId" in (result as object)
           ? renderInspection(result as WorkspaceInspection)
           : JSON.stringify(result, null, 2)

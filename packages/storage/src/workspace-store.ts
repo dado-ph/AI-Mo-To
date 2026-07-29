@@ -4,6 +4,16 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { WorkspaceManifest } from "@ai-mo-to/protocol";
 
+interface RecordRow {
+  module_id: string;
+  collection_id: string;
+  record_id: string;
+  record_version: number;
+  created_at: string;
+  updated_at: string;
+  data_json: string;
+}
+
 export interface StoredWorkspace {
   workspaceId: string;
   revision: number;
@@ -27,6 +37,30 @@ export interface StoredRevision {
   createdAt: string;
   reason: string;
   manifest: WorkspaceManifest;
+}
+
+/** A durable record owned by a module collection. `data` is always a JSON object. */
+export interface StoredRecord<T extends Record<string, unknown> = Record<string, unknown>> {
+  moduleId: string;
+  collectionId: string;
+  recordId: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  data: T;
+}
+
+export class RecordStoreError extends Error {
+  constructor(readonly code: "RecordNotFound" | "RecordExists" | "VersionConflict" | "ValidationFailed", message: string) {
+    super(message);
+    this.name = "RecordStoreError";
+  }
+}
+
+function assertRecordId(value: string): void {
+  if (!value.trim() || value.length > 160) {
+    throw new RecordStoreError("ValidationFailed", "A record id is required and must be at most 160 characters.");
+  }
 }
 
 export class ProposalCommitError extends Error {
@@ -129,7 +163,117 @@ export class WorkspaceStore {
         principal_id TEXT NOT NULL,
         approved_at TEXT NOT NULL
       ) STRICT;
+
+      CREATE TABLE IF NOT EXISTS module_records (
+        module_id TEXT NOT NULL,
+        collection_id TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        record_version INTEGER NOT NULL CHECK (record_version >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        PRIMARY KEY (module_id, collection_id, record_id)
+      ) STRICT;
+
+      CREATE TABLE IF NOT EXISTS record_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        occurred_at TEXT NOT NULL,
+        module_id TEXT NOT NULL,
+        collection_id TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        record_version INTEGER NOT NULL,
+        payload_json TEXT NOT NULL
+      ) STRICT;
     `);
+  }
+
+  createRecord<T extends Record<string, unknown>>(input: {
+    moduleId: string;
+    collectionId: string;
+    recordId: string;
+    data: T;
+    now: string;
+    validate?: (data: T) => void;
+  }): StoredRecord<T> {
+    assertRecordId(input.recordId);
+    input.validate?.(input.data);
+    try {
+      this.#database.prepare(`
+        INSERT INTO module_records (module_id, collection_id, record_id, record_version, created_at, updated_at, data_json)
+        VALUES (?, ?, ?, 1, ?, ?, ?)
+      `).run(input.moduleId, input.collectionId, input.recordId, input.now, input.now, JSON.stringify(input.data));
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) {
+        throw new RecordStoreError("RecordExists", `Record ${input.recordId} already exists in ${input.collectionId}.`);
+      }
+      throw error;
+    }
+    this.#recordEvent(input, "record.created", 1, input.data);
+    return { moduleId: input.moduleId, collectionId: input.collectionId, recordId: input.recordId, version: 1, createdAt: input.now, updatedAt: input.now, data: input.data };
+  }
+
+  getRecord<T extends Record<string, unknown>>(moduleId: string, collectionId: string, recordId: string): StoredRecord<T> | undefined {
+    const row = this.#database.prepare(`
+      SELECT module_id, collection_id, record_id, record_version, created_at, updated_at, data_json
+      FROM module_records WHERE module_id = ? AND collection_id = ? AND record_id = ?
+    `).get(moduleId, collectionId, recordId) as RecordRow | undefined;
+    return row ? this.#toRecord<T>(row) : undefined;
+  }
+
+  listRecords<T extends Record<string, unknown>>(moduleId: string, collectionId: string): readonly StoredRecord<T>[] {
+    const rows = this.#database.prepare(`
+      SELECT module_id, collection_id, record_id, record_version, created_at, updated_at, data_json
+      FROM module_records WHERE module_id = ? AND collection_id = ? ORDER BY updated_at DESC, record_id ASC
+    `).all(moduleId, collectionId) as unknown as RecordRow[];
+    return rows.map((row) => this.#toRecord<T>(row));
+  }
+
+  updateRecord<T extends Record<string, unknown>>(input: {
+    moduleId: string;
+    collectionId: string;
+    recordId: string;
+    expectedVersion: number;
+    data: T;
+    now: string;
+    validate?: (data: T) => void;
+  }): StoredRecord<T> {
+    assertRecordId(input.recordId);
+    input.validate?.(input.data);
+    const result = this.#database.prepare(`
+      UPDATE module_records SET record_version = record_version + 1, updated_at = ?, data_json = ?
+      WHERE module_id = ? AND collection_id = ? AND record_id = ? AND record_version = ?
+    `).run(input.now, JSON.stringify(input.data), input.moduleId, input.collectionId, input.recordId, input.expectedVersion);
+    if (result.changes !== 1) {
+      if (!this.getRecord(input.moduleId, input.collectionId, input.recordId)) {
+        throw new RecordStoreError("RecordNotFound", `Record ${input.recordId} does not exist in ${input.collectionId}.`);
+      }
+      throw new RecordStoreError("VersionConflict", `Record ${input.recordId} changed before this update could be saved.`);
+    }
+    const record = this.getRecord<T>(input.moduleId, input.collectionId, input.recordId)!;
+    this.#recordEvent(input, "record.updated", record.version, input.data);
+    return record;
+  }
+
+  deleteRecord(input: { moduleId: string; collectionId: string; recordId: string; expectedVersion: number; now: string }): void {
+    const existing = this.getRecord(input.moduleId, input.collectionId, input.recordId);
+    if (!existing) throw new RecordStoreError("RecordNotFound", `Record ${input.recordId} does not exist in ${input.collectionId}.`);
+    const result = this.#database.prepare(`
+      DELETE FROM module_records WHERE module_id = ? AND collection_id = ? AND record_id = ? AND record_version = ?
+    `).run(input.moduleId, input.collectionId, input.recordId, input.expectedVersion);
+    if (result.changes !== 1) throw new RecordStoreError("VersionConflict", `Record ${input.recordId} changed before it could be removed.`);
+    this.#recordEvent(input, "record.deleted", existing.version, existing.data);
+  }
+
+  #recordEvent(input: { moduleId: string; collectionId: string; recordId: string; now: string }, eventType: string, version: number, payload: unknown): void {
+    this.#database.prepare(`
+      INSERT INTO record_events (occurred_at, module_id, collection_id, record_id, event_type, record_version, payload_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(input.now, input.moduleId, input.collectionId, input.recordId, eventType, version, JSON.stringify(payload));
+  }
+
+  #toRecord<T extends Record<string, unknown>>(row: RecordRow): StoredRecord<T> {
+    return { moduleId: row.module_id, collectionId: row.collection_id, recordId: row.record_id, version: row.record_version, createdAt: row.created_at, updatedAt: row.updated_at, data: JSON.parse(row.data_json) as T };
   }
 
   create(manifest: WorkspaceManifest): void {

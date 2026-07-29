@@ -24,8 +24,11 @@
       "declaration": "views/detail.view.json"
     }
   ],
-  "commands": [],
-  "events": [],
-  "capabilities": ["workspace.files.read"],
+  "commands": [
+    { "id": "register", "inputSchema": "schemas/file.schema.json" },
+    { "id": "remove" }
+  ],
+  "events": [{ "id": "registered" }, { "id": "removed" }],
+  "capabilities": ["workspace.files.read", "workspace.files.propose"],
   "migrations": []
 }

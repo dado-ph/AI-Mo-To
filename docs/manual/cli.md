@@ -16,7 +16,7 @@ inspection is human-readable and other successful commands are pretty JSON.
 ## Complete approval quickstart
 
 The current `plan` command only creates a `workspace.set-authority-mode`
-proposal. It does not generate or install a module.
+proposal. For the product’s first agent-driven proof, use `agent habit plan`.
 
 ```sh
 pnpm --filter @ai-mo-to/cli aimoto workspace create "My Workspace" --root ./my-workspace --json
@@ -48,6 +48,37 @@ The final inspection should report `revision: 1` and `authorityMode: "build"`.
 Use `--principal <id>` on `apply` to record a supplied approver identifier;
 without it the engine records `local-user`.
 
+## Try the agent-driven Habit Tracker proof
+
+This is the complete local product path. It needs no account, API key, or
+network request. Your words are shown back to you as the request; the
+deterministic reference generator creates a small, inspectable Habit Tracker
+with habits, daily check-ins, and completion history.
+
+```powershell
+pnpm --filter @ai-mo-to/cli aimoto workspace create "My Habits" --root ./my-habits --json
+$review = pnpm --filter @ai-mo-to/cli aimoto agent habit plan --workspace ./my-habits --request "I want to track meditation every day" --json | ConvertFrom-Json
+
+# Read $review.data.plan and $review.data.proposal before continuing.
+$proposalId = $review.data.proposal.proposalId
+$digest = $review.data.proposal.changeSetDigest
+pnpm --filter @ai-mo-to/cli aimoto apply --workspace ./my-habits --proposal $proposalId --hash $digest --json
+pnpm --filter @ai-mo-to/cli aimoto inspect --workspace ./my-habits --json
+```
+
+Before approval, the review describes the records and views the module adds,
+the capabilities it requests, its staged location, and the exact SHA-256
+bundle digest. `apply` checks that digest and the workspace revision before it
+copies the verified module into the workspace. If you change the digest or the
+workspace advances, it is not installed; run the plan again and review the new
+proposal.
+
+For a readable review instead of JSON, omit `--json`:
+
+```sh
+pnpm --filter @ai-mo-to/cli aimoto agent habit plan --workspace ./my-habits --request "Track my daily habits"
+```
+
 ## Commands
 
 ```
@@ -57,6 +88,8 @@ aimoto snapshot create [--workspace <path>] [--json]
 aimoto snapshot list [--workspace <path>] [--json]
 aimoto snapshot inspect <snapshot-id> [--workspace <path>] [--json]
 aimoto snapshot restore-plan <snapshot-id> [--workspace <path>] [--json]
+aimoto snapshot restore-propose <snapshot-id> [--workspace <path>] [--json]
+aimoto agent habit plan --workspace <path> [--request "what you need"] [--json]
 aimoto plan --workspace <path> --set-authority <mode> [--json]
 aimoto apply --workspace <path> --proposal <id> --hash <sha256:digest> [--principal <id>] [--json]
 ```
@@ -83,11 +116,22 @@ $snapshotId = $snapshot.data.snapshotId
 pnpm --filter @ai-mo-to/cli aimoto snapshot list --workspace ./my-workspace --json
 pnpm --filter @ai-mo-to/cli aimoto snapshot inspect $snapshotId --workspace ./my-workspace --json
 pnpm --filter @ai-mo-to/cli aimoto snapshot restore-plan $snapshotId --workspace ./my-workspace --json
+$restore = pnpm --filter @ai-mo-to/cli aimoto snapshot restore-propose $snapshotId --workspace ./my-workspace --json | ConvertFrom-Json
+
+# Review the restore proposal before approving it. The workspace has not changed yet.
+$proposalId = $restore.data.proposalId
+$digest = $restore.data.changeSetDigest
+pnpm --filter @ai-mo-to/cli aimoto apply --workspace ./my-workspace --proposal $proposalId --hash $digest --json
 ```
 
 `snapshot inspect` verifies its stored digest. `snapshot restore-plan` is
 deliberately non-destructive: it shows what a restore would change and leaves
-the workspace untouched. This release does not yet include a restore executor.
+the workspace untouched. `snapshot restore-propose` creates a normal pending
+proposal bound to the exact snapshot ID, captured manifest digest, and current
+workspace revision. Only `apply` with that proposal's exact digest performs
+the restore. It creates a new revision; it never replaces the old revision
+history. If the workspace changes after the proposal is created, approval is
+rejected as stale and you must propose the restore again.
 
 Run `aimoto`, `aimoto help`, or `aimoto --help` for the short usage display.
 
@@ -106,6 +150,8 @@ the envelope shape. Human-mode errors go to standard error as `Code: message`.
 | `snapshot list` | Available snapshot summaries |
 | `snapshot inspect` | Verification result and captured recovery metadata |
 | `snapshot restore-plan` | Non-destructive recovery plan |
+| `snapshot restore-propose` | Pending digest-bound proposal that restores the captured workspace configuration as a new revision |
+| `agent habit plan` | Request, plain-language Habit Tracker plan, staged module details, and a pending digest-bound proposal |
 | `plan` | Proposal: `proposalId`, `workspaceId`, `baseRevision`, `changeSet`, `changeSetDigest`, `status`, `createdAt` |
 | `apply` | The resulting workspace inspection shape |
 
