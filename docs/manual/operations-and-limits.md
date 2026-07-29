@@ -1,0 +1,52 @@
+# Operations, trust, and limits
+
+## Workspace layout
+
+Creating a workspace produces:
+
+```
+<root>/
+  .aimoto/workspace.json       validated workspace manifest
+  .aimoto/state.sqlite         SQLite state (WAL mode)
+  .aimoto/context/
+  .aimoto/modules/local/
+  .aimoto/snapshots/
+  files/
+  exports/
+```
+
+The engine checks that the manifest and database agree on workspace ID and
+revision. Do not manually edit one without the other; inspection will fail.
+SQLite keeps revision, event, proposal, and approval records. The manifest
+write is atomic at the file level, but do not treat this early implementation
+as a substitute for ordinary filesystem backups.
+
+## Trust and integrity
+
+An approval is not a broad permission: it binds one exact canonical ChangeSet
+digest and base revision. If the workspace changes first, the proposal becomes
+stale. For generated local modules, the engine re-hashes the staged directory
+before copying it to `.aimoto/modules/local/<digest>` and refuses mismatch.
+
+Foundry rejects unsafe or duplicate bundle paths and staged symbolic links.
+Snapshots explicitly reject inputs containing `credentials` or `secrets`; they
+record credential *binding keys* only. This is not a full secret-management or
+sandboxing system. Review generated module code and its requested capabilities
+before approving it.
+
+## Current limitations
+
+- No desktop shell or approval UI is implemented.
+- CLI planning only changes authority mode; it cannot stage foundry output,
+  install a module, create snapshots, restore, or run modules.
+- Snapshot restore only returns a plan; it never applies one.
+- Foundry requires caller-provided selector, generator, validator, and activator
+  hooks. It has no built-in model provider or registry.
+- Capabilities are recorded/requested data in this slice; no capability-grant
+  enforcement flow is implemented.
+- The module host supervises a local Node child process but is not a security
+  sandbox.
+
+Run `pnpm validate` after changes. For operational review, inspect the generated
+JSON proposal and digest before calling `apply`, and retain the workspace root
+including `.aimoto` when moving or backing it up.

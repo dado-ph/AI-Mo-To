@@ -139,4 +139,26 @@ describe("aimoto CLI", () => {
       data: { revision: 1, authorityMode: "build" }
     });
   });
+
+  it("returns a machine-readable error for a nonexistent proposal", async () => {
+    const cwd = await temporaryDirectory();
+    const create = capture();
+    await runCli(["workspace", "create", "Missing Proposal", "--root", "missing", "--json"], create.io, { cwd });
+    const output = capture();
+
+    expect(await runCli([
+      "apply", "--workspace", "missing", "--proposal", "d49b2144-17a8-4a1c-8f3e-01e92d6c6e5e",
+      "--hash", `sha256:${"a".repeat(64)}`, "--json"
+    ], output.io, { cwd })).toBe(2);
+    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
+      ok: false,
+      error: { code: "ProposalNotFound" }
+    });
+  });
+
+  it("prints usage successfully for any command-level help request", async () => {
+    const output = capture();
+    expect(await runCli(["workspace", "create", "--help"], output.io)).toBe(0);
+    expect(output.stdout[0]).toContain("aimoto workspace create");
+  });
 });

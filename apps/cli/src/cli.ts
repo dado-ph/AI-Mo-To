@@ -95,6 +95,11 @@ export async function runCli(
   const wantsJson = args.includes("--json");
   let command = args[0] ?? "help";
 
+  if (args.includes("--help")) {
+    io.stdout(usage());
+    return 0;
+  }
+
   try {
     let result: unknown;
     if (args[0] === "workspace" && args[1] === "create") {

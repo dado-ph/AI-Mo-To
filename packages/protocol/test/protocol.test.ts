@@ -58,6 +58,20 @@ describe("protocol conformance fixtures", () => {
     expect(result.valid).toBe(false);
   });
 
+  it("accepts every error code emitted by the CLI engine boundary", () => {
+    const result = validateProtocol("json-envelope", {
+      envelopeVersion: "1.0.0",
+      ok: false,
+      command: "apply",
+      traceId: "32d9999f-3703-48cb-8736-f4546697a21c",
+      error: {
+        code: "ProposalNotFound",
+        message: "The proposal does not exist."
+      }
+    });
+    expect(result.valid).toBe(true);
+  });
+
   it("canonicalizes object keys and binds the exact ChangeSet bytes", async () => {
     expect(canonicalJson({ zebra: [true, null], alpha: { b: 2, a: 1 } }))
       .toBe('{"alpha":{"a":1,"b":2},"zebra":[true,null]}');
