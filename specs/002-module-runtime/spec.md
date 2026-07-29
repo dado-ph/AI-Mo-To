@@ -32,9 +32,21 @@ JSON-RPC without allowing diagnostic output to corrupt the protocol stream.
 - The Node child process is documented and tested as a fault boundary, not an
   operating-system security boundary.
 
+## Engine integration
+
+- The engine mints opaque, in-memory `context_ref` grants bound to one workspace,
+  module, workspace revision, expiry, operation budget, and authority ceiling.
+- A broker validates that binding before forwarding a handler invocation. Contexts
+  cannot be reused after a revision change, expiry, or budget exhaustion.
+- Authority is a monotonic ceiling: a brokered command can never request more than
+  the authority at grant time or the workspace's current authority.
+- Host faults are returned as stable engine errors and do not mutate workspace state.
+- New workspaces pin the declarative Files and Tasks built-ins by complete bundle
+  digest and expose their four native views in the initial layout.
+
 ## Out of scope
 
-Engine broker implementation, capability authorization, SQLite mutation,
+Capability authorization beyond the authority ceiling, SQLite mutation,
 desktop rendering, OS sandboxing, migrations, module installation, snapshots,
 and arbitrary module-supplied frontend code.
 
@@ -46,4 +58,5 @@ and arbitrary module-supplied frontend code.
   stderr, and termination.
 - Files and Tasks manifests validate through the protocol module schema.
 - View declarations contain only supported native primitives.
-
+- Lifecycle tests cover context mismatch, expiry, exhausted budget, authority
+  ceiling, host failure, and default built-in composition.

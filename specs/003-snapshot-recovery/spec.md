@@ -31,9 +31,17 @@ before use and restored only by proposing a new workspace revision.
 - Supplying a credential or secret value is rejected before any snapshot is
   written.
 
+## Integration
+
+The workspace engine exposes snapshot creation, listing, inspection, and restore
+planning. The CLI maps these to `aimoto snapshot create`, `list`, `inspect`, and
+`restore-plan`. Creation captures the current manifest and immutable revision
+history from SQLite. A restore plan is informational only: it verifies the
+snapshot against its content-addressed object store and names the next revision,
+but cannot modify the active workspace.
+
 ## Non-goals
 
 - Applying a restore plan or changing the active workspace.
 - Migration execution.
 - Credential storage or machine key-store access.
-- CLI integration.

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface SnapshotObjectRef {
@@ -20,6 +20,8 @@ export interface SnapshotManifest {
   readonly workspaceId: string;
   readonly workspaceRevision: number;
   readonly workspaceManifest: SnapshotObjectRef;
+  /** Immutable record of every workspace revision known at snapshot time. */
+  readonly revisions: SnapshotObjectRef;
   readonly modules: readonly SnapshotModule[];
   readonly data: SnapshotObjectRef;
   readonly context: SnapshotObjectRef;
@@ -32,6 +34,7 @@ export interface SnapshotInput {
   readonly workspaceId: string;
   readonly workspaceRevision: number;
   readonly workspaceManifest: unknown;
+  readonly revisions: unknown;
   readonly modules: readonly {
     readonly moduleId: string;
     readonly version: string;
@@ -67,7 +70,17 @@ export interface RestorePlan {
   readonly baseRevision: number;
   readonly targetRevision: number;
   readonly manifest: SnapshotManifest;
+  /** Content-addressed bundles that must be available before any future restore apply. */
+  readonly requiredModuleBundleDigests: readonly string[];
   readonly requiredCredentialBindingKeys: readonly string[];
+}
+
+export interface SnapshotSummary {
+  readonly snapshotId: string;
+  readonly workspaceId: string;
+  readonly workspaceRevision: number;
+  readonly valid: boolean;
+  readonly errors: readonly string[];
 }
 
 function canonicalize(value: unknown): string {
@@ -132,6 +145,7 @@ async function putObject(
 export async function createSnapshot(root: string, input: SnapshotInput): Promise<CreatedSnapshot> {
   assertSafeInput(input);
   const workspaceManifest = await putObject(root, bytes(input.workspaceManifest), "application/json");
+  const revisions = await putObject(root, bytes(input.revisions), "application/json");
   const data = await putObject(root, bytes(input.data), "application/json");
   const context = await putObject(root, bytes(input.context), "application/json");
   const modules: SnapshotModule[] = [];
@@ -148,6 +162,7 @@ export async function createSnapshot(root: string, input: SnapshotInput): Promis
     workspaceId: input.workspaceId,
     workspaceRevision: input.workspaceRevision,
     workspaceManifest,
+    revisions,
     modules,
     data,
     context,
@@ -171,10 +186,33 @@ export async function createSnapshot(root: string, input: SnapshotInput): Promis
 function objectRefs(manifest: SnapshotManifest): SnapshotObjectRef[] {
   return [
     manifest.workspaceManifest,
+    manifest.revisions,
     manifest.data,
     manifest.context,
     ...manifest.modules.flatMap((module) => [module.bundle, module.schema]),
   ];
+}
+
+/** Lists snapshots without trusting them: each returned entry includes integrity status. */
+export async function listSnapshots(root: string): Promise<readonly SnapshotSummary[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(join(root, "snapshots"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const summaries = await Promise.all(entries.sort().map(async (snapshotId) => {
+    const verification = await verifySnapshot(root, snapshotId);
+    return {
+      snapshotId,
+      workspaceId: verification.manifest?.workspaceId ?? "unknown",
+      workspaceRevision: verification.manifest?.workspaceRevision ?? -1,
+      valid: verification.valid,
+      errors: verification.errors
+    };
+  }));
+  return summaries;
 }
 
 export async function verifySnapshot(root: string, snapshotId: string): Promise<SnapshotVerification> {
@@ -227,6 +265,7 @@ export async function planRestore(
     baseRevision: activeRevision,
     targetRevision: activeRevision + 1,
     manifest: verification.manifest,
+    requiredModuleBundleDigests: verification.manifest.modules.map((module) => module.bundle.digest),
     requiredCredentialBindingKeys: verification.manifest.credentialBindingKeys,
   });
 }

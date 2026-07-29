@@ -1,0 +1,14 @@
+{
+  "name": "@ai-mo-to/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": { "build": "tsc -p tsconfig.json", "test": "vitest run" },
+  "dependencies": {
+    "@ai-mo-to/engine": "workspace:*",
+    "@ai-mo-to/ui-primitives": "workspace:*"
+  },
+  "peerDependencies": { "electron": ">=30" },
+  "peerDependenciesMeta": { "electron": { "optional": true } }
+}

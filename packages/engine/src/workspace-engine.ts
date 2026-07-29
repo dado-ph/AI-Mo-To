@@ -1,7 +1,9 @@
-import { access, cp } from "node:fs/promises";
+import { access, cp, readdir, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { verifyStagedModule } from "@ai-mo-to/foundry";
+import { digestBundle, verifyStagedModule } from "@ai-mo-to/foundry";
 
 import {
   SCHEMA_VERSION,
@@ -22,8 +24,56 @@ import {
   workspaceManifestPath,
   writeWorkspaceManifest
 } from "@ai-mo-to/storage";
+import {
+  createSnapshot,
+  listSnapshots,
+  planRestore,
+  verifySnapshot,
+  type CreatedSnapshot,
+  type RestorePlan,
+  type SnapshotSummary,
+  type SnapshotVerification
+} from "@ai-mo-to/snapshot";
 
 import { EngineError } from "./errors.js";
+
+const AUTHORITY_RANK: Record<AuthorityMode, number> = {
+  observe: 0, suggest: 1, assist: 2, execute: 3, build: 4
+};
+type ModuleJsonValue = null | boolean | number | string | ModuleJsonValue[] | { [key: string]: ModuleJsonValue };
+
+export interface ModuleHostClient {
+  invoke(params: { context_ref: string; command: string; input: ModuleJsonValue }): Promise<ModuleJsonValue>;
+}
+
+interface ContextGrant {
+  workspaceId: string;
+  moduleId: string;
+  revision: number;
+  expiresAt: number;
+  remainingOperations: number;
+  authorityCeiling: AuthorityMode;
+}
+
+export interface MintContextInput {
+  root: string;
+  moduleId: string;
+  ttlMs?: number;
+  operationBudget?: number;
+  authorityCeiling?: AuthorityMode;
+  now?: () => Date;
+}
+
+export interface InvokeModuleInput {
+  root: string;
+  moduleId: string;
+  contextRef: string;
+  command: string;
+  input: ModuleJsonValue;
+  host: ModuleHostClient;
+  requiredAuthority?: AuthorityMode;
+  now?: () => Date;
+}
 
 export interface CreateWorkspaceInput {
   root: string;
@@ -40,6 +90,7 @@ export interface WorkspaceInspection {
   createdAt: string;
   modules: WorkspaceManifest["modules"];
   authorityMode: WorkspaceManifest["authorityMode"];
+  layout: WorkspaceManifest["layout"];
   health: "ok";
 }
 
@@ -53,6 +104,52 @@ export interface CreateProposalInput {
 export interface ApproveProposalInput {
   root: string;
   approval: ApprovalRecord;
+}
+
+async function bundleFiles(directory: string, relative = ""): Promise<Array<{ path: string; content: Uint8Array }>> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files: Array<{ path: string; content: Uint8Array }> = [];
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    const name = relative ? `${relative}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) files.push(...await bundleFiles(path, name));
+    else if (entry.isFile()) files.push({ path: name, content: await readFile(path) });
+  }
+  return files;
+}
+
+async function builtInModulePins(): Promise<WorkspaceManifest["modules"]> {
+  const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  return Promise.all(["files", "tasks"].map(async (name) => {
+    const directory = join(repositoryRoot, "modules", name);
+    const manifest = JSON.parse(await readFile(join(directory, "module.json"), "utf8")) as { moduleId: string; version: string };
+    return {
+      moduleId: manifest.moduleId,
+      version: manifest.version,
+      digest: digestBundle(await bundleFiles(directory)),
+      source: { kind: "builtin" as const, reference: `builtin:${name}` }
+    };
+  }));
+}
+
+function moduleBundleDirectory(root: string, module: WorkspaceManifest["modules"][number]): string {
+  if (module.source.kind === "builtin") {
+    const name = module.source.reference.replace(/^builtin:/, "");
+    return join(fileURLToPath(new URL("../../../", import.meta.url)), "modules", name);
+  }
+  return join(root, ".aimoto", "modules", "local", module.digest.slice("sha256:".length));
+}
+
+async function readContext(root: string): Promise<Record<string, string>> {
+  const contextRoot = join(root, ".aimoto", "context");
+  try {
+    const names = await readdir(contextRoot, { recursive: true }) as string[];
+    const entries = await Promise.all(names.map(async (name) => {
+      const path = join(contextRoot, name);
+      try { return [name, await readFile(path, "utf8")] as const; } catch { return undefined; }
+    }));
+    return Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => Boolean(entry)));
+  } catch { return {}; }
 }
 
 function slugify(value: string): string {
@@ -176,6 +273,100 @@ async function prepareModuleBundles(root: string, changeSet: ChangeSet): Promise
 }
 
 export class WorkspaceEngine {
+  readonly #contexts = new Map<string, ContextGrant>();
+
+  /** Creates an opaque, in-memory invocation grant. It is never persisted or exposed to a module except by reference. */
+  async mintContext(input: MintContextInput): Promise<string> {
+    const workspace = await this.inspectWorkspace(input.root);
+    if (!workspace.modules.some((pin) => pin.moduleId === input.moduleId)) {
+      throw new EngineError("ModuleNotInstalled", `Module ${input.moduleId} is not installed in this workspace.`);
+    }
+    const ttlMs = input.ttlMs ?? 60_000;
+    const operationBudget = input.operationBudget ?? 1;
+    const authorityCeiling = input.authorityCeiling ?? workspace.authorityMode;
+    if (ttlMs <= 0 || operationBudget <= 0 || AUTHORITY_RANK[authorityCeiling] > AUTHORITY_RANK[workspace.authorityMode]) {
+      throw new EngineError("InvalidInput", "The context grant exceeds the workspace authority or has an invalid lifetime/budget.");
+    }
+    const reference = `ctx_${randomUUID()}`;
+    this.#contexts.set(reference, {
+      workspaceId: workspace.workspaceId, moduleId: input.moduleId, revision: workspace.revision,
+      expiresAt: (input.now ?? (() => new Date()))().getTime() + ttlMs,
+      remainingOperations: operationBudget, authorityCeiling
+    });
+    return reference;
+  }
+
+  /** Brokers a dynamic handler call after checking the engine-owned context grant. */
+  async invokeModule(input: InvokeModuleInput): Promise<ModuleJsonValue> {
+    const workspace = await this.inspectWorkspace(input.root);
+    const grant = this.#contexts.get(input.contextRef);
+    if (!grant) throw new EngineError("ContextNotFound", "The invocation context does not exist.");
+    if (grant.workspaceId !== workspace.workspaceId || grant.moduleId !== input.moduleId || grant.revision !== workspace.revision) {
+      throw new EngineError("ContextMismatch", "The invocation context is not bound to this workspace, module, and revision.");
+    }
+    if ((input.now ?? (() => new Date()))().getTime() >= grant.expiresAt) {
+      this.#contexts.delete(input.contextRef);
+      throw new EngineError("ContextExpired", "The invocation context has expired.");
+    }
+    if (grant.remainingOperations < 1) throw new EngineError("OperationBudgetExceeded", "The invocation context has exhausted its operation budget.");
+    const required = input.requiredAuthority ?? "observe";
+    if (AUTHORITY_RANK[required] > AUTHORITY_RANK[grant.authorityCeiling] || AUTHORITY_RANK[required] > AUTHORITY_RANK[workspace.authorityMode]) {
+      throw new EngineError("AuthorityExceeded", "The requested operation exceeds the monotonic authority ceiling.");
+    }
+    grant.remainingOperations -= 1;
+    try {
+      return await input.host.invoke({ context_ref: input.contextRef, command: input.command, input: input.input });
+    } catch (error) {
+      throw new EngineError("ModuleHostFault", "The module host failed; the workspace remains unchanged.", {
+        moduleId: input.moduleId,
+        cause: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  async createSnapshot(rootInput: string): Promise<CreatedSnapshot> {
+    const root = resolve(rootInput);
+    const inspection = await this.inspectWorkspace(root);
+    const store = new WorkspaceStore(workspaceDatabasePath(root));
+    try {
+      store.initialize();
+      const revisions = store.listRevisions();
+      const eventLogPosition = store.eventLogPosition();
+      const modules = await Promise.all(inspection.modules.map(async (module) => {
+        const bundle = await readFile(join(moduleBundleDirectory(root, module), "module.json"));
+        return { moduleId: module.moduleId, version: module.version, bundle, schema: JSON.parse(bundle.toString("utf8")) };
+      }));
+      return await createSnapshot(join(root, ".aimoto", "snapshots"), {
+        workspaceId: inspection.workspaceId,
+        workspaceRevision: inspection.revision,
+        workspaceManifest: await readWorkspaceManifest(root),
+        revisions,
+        modules,
+        data: {},
+        context: await readContext(root),
+        eventLogPosition,
+        engineConfigurationRefs: []
+      });
+    } finally { store.close(); }
+  }
+
+  async listSnapshots(rootInput: string): Promise<readonly SnapshotSummary[]> {
+    const root = resolve(rootInput);
+    await this.inspectWorkspace(root);
+    return listSnapshots(join(root, ".aimoto", "snapshots"));
+  }
+
+  async inspectSnapshot(rootInput: string, snapshotId: string): Promise<SnapshotVerification> {
+    const root = resolve(rootInput);
+    await this.inspectWorkspace(root);
+    return verifySnapshot(join(root, ".aimoto", "snapshots"), snapshotId);
+  }
+
+  async planSnapshotRestore(rootInput: string, snapshotId: string): Promise<RestorePlan> {
+    const root = resolve(rootInput);
+    const workspace = await this.inspectWorkspace(root);
+    return planRestore(join(root, ".aimoto", "snapshots"), snapshotId, workspace.revision);
+  }
   async createWorkspace(
     input: CreateWorkspaceInput
   ): Promise<WorkspaceInspection> {
@@ -204,10 +395,15 @@ export class WorkspaceEngine {
       name,
       createdAt: (input.now ?? (() => new Date()))().toISOString(),
       revision: 0,
-      modules: [],
+      modules: await builtInModulePins(),
       layout: {
-        homeView: "workspace.home",
-        views: []
+        homeView: "tasks.list",
+        views: [
+          { id: "files.browser", moduleId: "aimoto.files", viewId: "browser" },
+          { id: "files.detail", moduleId: "aimoto.files", viewId: "detail" },
+          { id: "tasks.list", moduleId: "aimoto.tasks", viewId: "task-list" },
+          { id: "tasks.form", moduleId: "aimoto.tasks", viewId: "task-form" }
+        ]
       },
       capabilities: [],
       eventRoutes: [],
@@ -279,6 +475,7 @@ export class WorkspaceEngine {
         createdAt: fileManifest.createdAt,
         modules: fileManifest.modules,
         authorityMode: fileManifest.authorityMode,
+        layout: fileManifest.layout,
         health: "ok"
       };
     } finally {

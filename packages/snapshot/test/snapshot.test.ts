@@ -21,6 +21,7 @@ function fixture(): SnapshotInput {
     workspaceId: "workspace-1",
     workspaceRevision: 4,
     workspaceManifest: { name: "Test", modules: ["tasks"] },
+    revisions: [{ revision: 0, reason: "workspace.created" }, { revision: 4, reason: "proposal.committed" }],
     modules: [{
       moduleId: "tasks",
       version: "1.0.0",
@@ -67,6 +68,7 @@ describe("snapshot recovery", () => {
       sourceRevision: 4,
       baseRevision: 9,
       targetRevision: 10,
+      requiredModuleBundleDigests: [snapshot.manifest.modules[0]!.bundle.digest],
       requiredCredentialBindingKeys: ["provider.openai"],
     });
     expect(await readFile(join(snapshot.path, "manifest.json"), "utf8")).toBe(before);

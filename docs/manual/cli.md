@@ -53,6 +53,10 @@ without it the engine records `local-user`.
 ```
 aimoto workspace create "<name>" [--root <path>] [--json]
 aimoto inspect [--workspace <path>] [--json]
+aimoto snapshot create [--workspace <path>] [--json]
+aimoto snapshot list [--workspace <path>] [--json]
+aimoto snapshot inspect <snapshot-id> [--workspace <path>] [--json]
+aimoto snapshot restore-plan <snapshot-id> [--workspace <path>] [--json]
 aimoto plan --workspace <path> --set-authority <mode> [--json]
 aimoto apply --workspace <path> --proposal <id> --hash <sha256:digest> [--principal <id>] [--json]
 ```
@@ -67,6 +71,24 @@ an AI-Mo-To manifest. `plan` requires `--set-authority`. `apply` requires both
 the proposal ID and its exact `sha256:` digest; it cannot approve a changed,
 missing, already committed, or stale proposal.
 
+## Snapshots and recovery
+
+Snapshots are local, verified recovery records. Creating one captures the
+workspace manifest, revision history, installed-module metadata, local context,
+and event-log position; it does not send workspace contents anywhere.
+
+```powershell
+$snapshot = pnpm --filter @ai-mo-to/cli aimoto snapshot create --workspace ./my-workspace --json | ConvertFrom-Json
+$snapshotId = $snapshot.data.snapshotId
+pnpm --filter @ai-mo-to/cli aimoto snapshot list --workspace ./my-workspace --json
+pnpm --filter @ai-mo-to/cli aimoto snapshot inspect $snapshotId --workspace ./my-workspace --json
+pnpm --filter @ai-mo-to/cli aimoto snapshot restore-plan $snapshotId --workspace ./my-workspace --json
+```
+
+`snapshot inspect` verifies its stored digest. `snapshot restore-plan` is
+deliberately non-destructive: it shows what a restore would change and leaves
+the workspace untouched. This release does not yet include a restore executor.
+
 Run `aimoto`, `aimoto help`, or `aimoto --help` for the short usage display.
 
 ## Output and exit status
@@ -80,6 +102,10 @@ the envelope shape. Human-mode errors go to standard error as `Code: message`.
 | --- | --- |
 | `workspace create` | Workspace inspection: `root`, `workspaceId`, `name`, `revision`, `createdAt`, `modules`, `authorityMode`, `health` |
 | `inspect` | The same workspace inspection shape |
+| `snapshot create` | Snapshot ID, creation time, and verified digest |
+| `snapshot list` | Available snapshot summaries |
+| `snapshot inspect` | Verification result and captured recovery metadata |
+| `snapshot restore-plan` | Non-destructive recovery plan |
 | `plan` | Proposal: `proposalId`, `workspaceId`, `baseRevision`, `changeSet`, `changeSetDigest`, `status`, `createdAt` |
 | `apply` | The resulting workspace inspection shape |
 

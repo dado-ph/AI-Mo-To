@@ -9,7 +9,6 @@
 - [x] Add host lifecycle fixtures and tests.
 - [x] Add declarative Files manifest, record schema, and native views.
 - [x] Add declarative Tasks manifest, record schema, and native views.
-- [ ] Integrate host invocation with engine-owned broker/context registry.
-- [ ] Pin built-in modules in default workspace composition.
+- [x] Integrate host invocation with engine-owned broker/context registry.
+- [x] Pin built-in modules in default workspace composition.
 - [ ] Render native views in the desktop shell.
-

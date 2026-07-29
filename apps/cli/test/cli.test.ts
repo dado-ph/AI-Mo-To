@@ -161,4 +161,18 @@ describe("aimoto CLI", () => {
     expect(await runCli(["workspace", "create", "--help"], output.io)).toBe(0);
     expect(output.stdout[0]).toContain("aimoto workspace create");
   });
+
+  it("creates and inspects a snapshot, then returns a non-destructive restore plan", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["workspace", "create", "Snapshot CLI", "--root", "snapshot", "--json"], capture().io, { cwd });
+    const created = capture();
+    expect(await runCli(["snapshot", "create", "--workspace", "snapshot", "--json"], created.io, { cwd })).toBe(0);
+    const snapshotId = JSON.parse(created.stdout[0] ?? "").data.snapshotId;
+    const listed = capture();
+    await runCli(["snapshot", "list", "--workspace", "snapshot", "--json"], listed.io, { cwd });
+    expect(JSON.parse(listed.stdout[0] ?? "")).toMatchObject({ data: [{ snapshotId, valid: true }] });
+    const plan = capture();
+    await runCli(["snapshot", "restore-plan", snapshotId, "--workspace", "snapshot", "--json"], plan.io, { cwd });
+    expect(JSON.parse(plan.stdout[0] ?? "")).toMatchObject({ data: { kind: "restore-as-new-revision", targetRevision: 1 } });
+  });
 });

@@ -79,6 +79,10 @@ function usage(): string {
     "Commands:",
     '  aimoto workspace create "<name>" [--root <path>] [--json]',
     "  aimoto inspect [--workspace <path>] [--json]",
+    "  aimoto snapshot create [--workspace <path>] [--json]",
+    "  aimoto snapshot list [--workspace <path>] [--json]",
+    "  aimoto snapshot inspect <snapshot-id> [--workspace <path>] [--json]",
+    "  aimoto snapshot restore-plan <snapshot-id> [--workspace <path>] [--json]",
     "  aimoto plan --workspace <path> --set-authority <mode> [--json]",
     "  aimoto apply --workspace <path> --proposal <id> --hash <digest> [--principal <id>] [--json]"
   ].join("\n");
@@ -117,6 +121,19 @@ export async function runCli(
       command = "inspect";
       const root = resolve(cwd, option(args, "--workspace") ?? ".");
       result = await engine.inspectWorkspace(root);
+    } else if (args[0] === "snapshot") {
+      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const action = args[1];
+      command = `snapshot.${action ?? "unknown"}`;
+      if (action === "create") result = await engine.createSnapshot(root);
+      else if (action === "list") result = await engine.listSnapshots(root);
+      else if (action === "inspect" || action === "restore-plan") {
+        const snapshotId = args[2];
+        if (!snapshotId || snapshotId.startsWith("--")) throw new EngineError("InvalidInput", `snapshot ${action} requires a snapshot id.`);
+        result = action === "inspect"
+          ? await engine.inspectSnapshot(root, snapshotId)
+          : await engine.planSnapshotRestore(root, snapshotId);
+      } else throw new EngineError("InvalidInput", "snapshot requires create, list, inspect, or restore-plan.");
     } else if (args[0] === "plan") {
       command = "plan";
       const root = resolve(cwd, option(args, "--workspace") ?? ".");

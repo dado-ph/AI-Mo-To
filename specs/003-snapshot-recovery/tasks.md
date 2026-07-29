@@ -10,5 +10,5 @@
   checks.
 - [x] Add disposable-workspace tests for determinism, integrity, secret
   exclusion, and non-destructive restore planning.
-- [ ] Integrate the package with the engine/storage transaction and CLI in a
-  later slice.
+- [x] Integrate engine/storage lifecycle capture and non-destructive restore
+  planning with the CLI.

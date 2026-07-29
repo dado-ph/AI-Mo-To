@@ -47,6 +47,18 @@ describe("WorkspaceEngine", () => {
       authorityMode: "suggest",
       health: "ok"
     });
+    expect(created.modules).toHaveLength(2);
+    expect(created.modules).toEqual(expect.arrayContaining([
+      expect.objectContaining({ moduleId: "aimoto.files", source: { kind: "builtin", reference: "builtin:files" }, digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) }),
+      expect.objectContaining({ moduleId: "aimoto.tasks", source: { kind: "builtin", reference: "builtin:tasks" }, digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) })
+    ]));
+    expect(created.layout).toEqual({
+      homeView: "tasks.list",
+      views: expect.arrayContaining([
+        expect.objectContaining({ id: "files.browser" }),
+        expect.objectContaining({ id: "tasks.list" })
+      ])
+    });
     expect(await readFile(workspaceManifestPath(root), "utf8")).toContain(
       '"schemaVersion": "1.0.0"'
     );
@@ -73,6 +85,37 @@ describe("WorkspaceEngine", () => {
     ).rejects.toMatchObject({
       code: "WorkspaceNotFound"
     });
+  });
+
+  it("brokers only bound, unexpired, budgeted module contexts and isolates host faults", async () => {
+    const root = await temporaryWorkspace();
+    const engine = new WorkspaceEngine();
+    await engine.createWorkspace({ root, name: "Runtime Workspace" });
+    const clock = { now: new Date("2026-07-29T00:00:00.000Z") };
+    const now = () => clock.now;
+    const context = await engine.mintContext({ root, moduleId: "aimoto.files", ttlMs: 1_000, operationBudget: 1, now });
+    const host = { invoke: async () => ({ echoed: "read" }) };
+    await expect(engine.invokeModule({ root, moduleId: "aimoto.files", contextRef: context, command: "read", input: null, host, now }))
+      .resolves.toEqual({ echoed: "read" });
+    await expect(engine.invokeModule({ root, moduleId: "aimoto.files", contextRef: context, command: "read", input: null, host, now }))
+      .rejects.toMatchObject({ code: "OperationBudgetExceeded" });
+
+    const mismatch = await engine.mintContext({ root, moduleId: "aimoto.files", now });
+    await expect(engine.invokeModule({ root, moduleId: "aimoto.tasks", contextRef: mismatch, command: "create", input: null, host, now }))
+      .rejects.toMatchObject({ code: "ContextMismatch" });
+
+    const expired = await engine.mintContext({ root, moduleId: "aimoto.files", ttlMs: 1, now });
+    clock.now = new Date("2026-07-29T00:00:01.000Z");
+    await expect(engine.invokeModule({ root, moduleId: "aimoto.files", contextRef: expired, command: "read", input: null, host, now }))
+      .rejects.toMatchObject({ code: "ContextExpired" });
+
+    const limited = await engine.mintContext({ root, moduleId: "aimoto.files", authorityCeiling: "suggest", now });
+    await expect(engine.invokeModule({ root, moduleId: "aimoto.files", contextRef: limited, command: "write", input: null, host, requiredAuthority: "execute", now }))
+      .rejects.toMatchObject({ code: "AuthorityExceeded" });
+
+    const fault = await engine.mintContext({ root, moduleId: "aimoto.files", now });
+    await expect(engine.invokeModule({ root, moduleId: "aimoto.files", contextRef: fault, command: "read", input: null, host: { invoke: async () => { throw new Error("child exited"); } }, now }))
+      .rejects.toMatchObject({ code: "ModuleHostFault" });
   });
 
   it("binds approval to one exact ChangeSet and rejects a stale proposal", async () => {
@@ -187,8 +230,23 @@ describe("WorkspaceEngine", () => {
       }
     });
 
-    expect(committed.modules).toMatchObject([{ moduleId: "local.habit-tracker", digest }]);
+    expect(committed.modules).toEqual(expect.arrayContaining([expect.objectContaining({ moduleId: "local.habit-tracker", digest })]));
     await expect(readFile(join(root, ".aimoto", "modules", "local", digest.slice(7), "module.json"), "utf8"))
       .resolves.toBe(moduleJson);
+  });
+
+  it("creates, verifies, lists, and safely plans recovery snapshots", async () => {
+    const root = await temporaryWorkspace();
+    const engine = new WorkspaceEngine();
+    await engine.createWorkspace({ root, name: "Snapshot Workspace" });
+    const snapshot = await engine.createSnapshot(root);
+    expect(snapshot.manifest.workspaceRevision).toBe(0);
+    expect(snapshot.manifest.revisions.digest).toMatch(/^[a-f0-9]{64}$/);
+    await expect(engine.inspectSnapshot(root, snapshot.snapshotId)).resolves.toMatchObject({ valid: true });
+    await expect(engine.listSnapshots(root)).resolves.toMatchObject([{ snapshotId: snapshot.snapshotId, valid: true }]);
+    await expect(engine.planSnapshotRestore(root, snapshot.snapshotId)).resolves.toMatchObject({
+      kind: "restore-as-new-revision", baseRevision: 0, targetRevision: 1
+    });
+    expect((await engine.inspectWorkspace(root)).revision).toBe(0);
   });
 });

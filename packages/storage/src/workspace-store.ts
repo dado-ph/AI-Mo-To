@@ -22,6 +22,13 @@ export interface StoredProposal {
   createdAt: string;
 }
 
+export interface StoredRevision {
+  revision: number;
+  createdAt: string;
+  reason: string;
+  manifest: WorkspaceManifest;
+}
+
 export class ProposalCommitError extends Error {
   constructor(readonly code: "ProposalNotFound" | "ApprovalRequired" | "ProposalStale" | "HashMismatch", message: string) {
     super(message);
@@ -247,6 +254,23 @@ export class WorkspaceStore {
       changeSet: JSON.parse(row.change_set_json) as unknown,
       createdAt: row.created_at
     } : undefined;
+  }
+
+  listRevisions(): readonly StoredRevision[] {
+    const rows = this.#database.prepare(`
+      SELECT revision, created_at, reason, manifest_json FROM revision_log ORDER BY revision ASC
+    `).all() as { revision: number; created_at: string; reason: string; manifest_json: string }[];
+    return rows.map((row) => ({
+      revision: row.revision,
+      createdAt: row.created_at,
+      reason: row.reason,
+      manifest: JSON.parse(row.manifest_json) as WorkspaceManifest
+    }));
+  }
+
+  eventLogPosition(): number {
+    const row = this.#database.prepare("SELECT COALESCE(MAX(sequence), 0) AS position FROM event_log").get() as { position: number };
+    return row.position;
   }
 
   commitProposal(input: {
