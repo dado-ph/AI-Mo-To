@@ -1,40 +1,54 @@
-# AI-Mo-To!
+# AI-Mo-To
 
-AI-Mo-To is an early, local-first workspace engine and module foundry. Its
-current usable command-line path creates a workspace, stages an authority-mode
-change, approves the exact proposed bytes, and inspects the resulting revision.
+AI-Mo-To is a work-in-progress tool for making small, local workspaces safely.
+
+Today, you can use it to create a workspace on your computer, propose one
+setting change, approve that exact change, and see the workspace move to a new
+revision. It is a proof that changes can be visible and approved before they
+take effect.
+
+It is not a finished desktop app yet. There is no graphical interface, no
+published npm package, and no command that generates a Habit Tracker for you.
+Those pieces are being built around the working local core.
 
 ## Start here
 
-Requirements: Node.js 22+ and pnpm 10+ (the repository is pinned to pnpm
-11.9.0). From this checkout:
+You need Node.js 22 or later and pnpm. From this repository, run:
 
-```sh
+```powershell
 pnpm install
 pnpm build
-pnpm --filter @ai-mo-to/cli aimoto workspace create "My Workspace" --root ./my-workspace --json
-pnpm --filter @ai-mo-to/cli aimoto inspect --workspace ./my-workspace --json
 ```
 
-For the complete, runnable create -> plan -> approve -> inspect sequence, see
-the [CLI manual](docs/manual/cli.md). The [manual index](docs/manual/README.md)
-covers the JSON protocol, library APIs, module runtime, operational limits, and
-the current implementation boundary.
+Then follow the step-by-step guide:
 
-## Current scope
+[Get started with your first workspace](docs/getting-started.md)
 
-The CLI supports workspace creation and inspection plus staging and approving a
-`workspace.set-authority-mode` ChangeSet. Foundry staging, module installation,
-snapshots, and the module host are exported libraries; they do not yet have CLI
-commands or desktop UI flows. Treat the API as `0.1.0` early-stage software.
-All `@ai-mo-to/*` packages in this monorepo are private workspace packages;
-this repository does not claim they are published or installable from npm.
+It takes you through this complete loop:
 
-Run the repository checks with:
+1. Create a workspace.
+2. Ask to switch it into Build mode.
+3. Review the proposed change.
+4. Approve the exact proposal.
+5. Confirm that the workspace has a new revision.
 
-```sh
+## What is in this repository?
+
+- `apps/cli` is the command-line program you can use today.
+- `packages` contains the local building blocks: workspace state, proposals,
+  snapshots, generated-module staging, and module hosting.
+- `modules` contains the built-in Files and Tasks examples.
+- `docs/manual` is the technical reference for contributors and integrations.
+
+## Useful links
+
+- [Getting started](docs/getting-started.md) - one complete, human-readable walkthrough.
+- [Command reference](docs/manual/cli.md) - every supported command and its errors.
+- [What the tool can and cannot do today](docs/manual/operations-and-limits.md).
+- [Technical API reference](docs/manual/library-apis.md) - for people extending the code.
+
+To check the repository after a change, run:
+
+```powershell
 pnpm validate
 ```
-
-Architecture decisions are in [docs/adrs](docs/adrs), and implementation
-specifications are in [specs](specs).
