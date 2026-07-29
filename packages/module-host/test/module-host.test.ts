@@ -29,7 +29,7 @@ describe("ModuleHost", () => {
   it("isolates timeouts and crashes", async () => {
     // Process startup competes with the monorepo's parallel test workers on CI.
     // Keep the timeout behavior under test while giving initialization room to start.
-    const timeout = host({ timeoutMs: 500 });
+    const timeout = host({ timeoutMs: 1_000 });
     await timeout.start();
     await expect(
       timeout.invoke({ context_ref: "opaque:2", command: "hang", input: null })

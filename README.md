@@ -1,23 +1,26 @@
 # AI-Mo-To
 
-AI-Mo-To is a work-in-progress tool for making small, local workspaces safely.
+AI-Mo-To is a local-first desktop application for turning a modest need into a
+workspace you can inspect, change, and recover. The repository builds the app;
+the installed app is what people use.
 
-Today, you can create a local workspace, use the desktop shell to inspect it,
-ask the built-in local agent workflow for a Habit Tracker, review its exact
-proposal, approve its installation, and recover a saved workspace configuration
-through the same approval path. This is still an early local-first product, but
-the core loop is now real rather than a diagram.
+Today, you can create a local workspace, open it in the desktop app, ask the
+built-in local agent workflow for a Habit Tracker, review the exact proposal,
+approve its installation, and recover a saved workspace configuration through
+the same approval path.
 
 ## Start here
 
-You need Node.js 22 or later and pnpm. From this repository, run:
+To build the Windows installer from source, you need Node.js 22 or later and
+pnpm. From this repository, run:
 
 ```powershell
 pnpm install
-pnpm build
+pnpm --filter @ai-mo-to/desktop dist
 ```
 
-Then follow the step-by-step guide:
+The NSIS installer is written to `apps/desktop/release/`. For the product flow
+and source-based CLI walkthrough, follow:
 
 [Get started with your first workspace](docs/getting-started.md)
 
@@ -35,8 +38,8 @@ to recover it as a new revision. The command reference includes each step.
 
 ## What is in this repository?
 
-- `apps/cli` is the command-line program and agent-facing workflow you can use today.
-- `apps/desktop` is the local Electron shell for selecting and inspecting workspaces.
+- `apps/cli` is the structured command-line interface for people and coding agents.
+- `apps/desktop` is the installable local Electron application.
 - `packages` contains the local building blocks: workspace state, proposals,
   snapshots, generated-module staging, and module hosting.
 - `modules` contains the built-in Files and Tasks examples.

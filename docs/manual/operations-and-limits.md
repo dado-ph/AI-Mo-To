@@ -41,20 +41,23 @@ workspace configuration as the next revision only when that exact proposal and
 its base revision still match. Earlier revisions remain in SQLite's revision
 history; recovery is not a database rollback.
 
-## Current limitations
+## Current boundaries
 
-- No desktop shell or approval UI is implemented.
-- CLI planning only changes authority mode; it cannot stage foundry output,
-  install a module, create snapshots, restore, or run modules.
+- The installable desktop app opens a selected workspace and shows its trusted
+  revision and starting Files and Tasks views. It does not yet provide the
+  complete graphical proposal, approval, record-editing, or recovery flow.
+- The CLI can stage the built-in local Habit Tracker, create and inspect
+  snapshots, and prepare a restore proposal. `apply` remains the only command
+  that commits an approved workspace change.
 - Snapshot recovery restores the captured workspace configuration, not a full
   filesystem backup or external credentials. Keep ordinary backups for files
   and exports.
-- Foundry requires caller-provided selector, generator, validator, and activator
-  hooks. It has no built-in model provider or registry.
-- Capabilities are recorded/requested data in this slice; no capability-grant
-  enforcement flow is implemented.
-- The module host supervises a local Node child process but is not a security
-  sandbox.
+- Generic Foundry integrations require caller-provided selector, generator,
+  validator, and activator hooks. The built-in Habit Tracker flow is a local,
+  deterministic reference generator, not a model provider or module registry.
+- Engine-mediated module calls enforce workspace capability grants and their
+  authority ceiling. The module host still supervises a local Node child
+  process; it is not an operating-system security sandbox.
 
 Run `pnpm validate` after changes. For operational review, inspect the generated
 JSON proposal and digest before calling `apply`, and retain the workspace root

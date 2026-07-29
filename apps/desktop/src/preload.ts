@@ -9,6 +9,7 @@ export interface ElectronBridge {
 /** Exposes only typed, allow-listed operations; the renderer never receives Node/Electron globals. */
 export function exposeDesktopApi(bridge: ElectronBridge): void {
   const api: DesktopApi = {
+    openDefaultWorkspace: () => bridge.ipcRenderer.invoke("workspace:default") as ReturnType<DesktopApi["openDefaultWorkspace"]>,
     selectWorkspace: () => bridge.ipcRenderer.invoke("workspace:select") as ReturnType<DesktopApi["selectWorkspace"]>,
     inspectWorkspace: (root) => bridge.ipcRenderer.invoke("workspace:inspect", root) as ReturnType<DesktopApi["inspectWorkspace"]>
   };

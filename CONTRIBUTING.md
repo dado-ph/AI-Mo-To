@@ -28,7 +28,10 @@ it when a dependency change is intentional.
 5. Run `pnpm validate` and open a pull request using the template.
 
 Changes that affect workspace state, ChangeSets, approvals, module execution,
-or snapshots should also document their compatibility and recovery impact.
+snapshots, the desktop interface, or installer packaging should also document
+their compatibility, recovery, and user-facing impact. Keep the product
+boundary clear: this repository builds AI-Mo-To, while the installed desktop
+app is what ordinary users run.
 
 ## Pull request expectations
 

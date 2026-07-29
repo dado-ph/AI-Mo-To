@@ -1,6 +1,7 @@
 import type { WorkspaceInspection } from "@ai-mo-to/engine";
 import { WorkspaceEngine } from "@ai-mo-to/engine";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DesktopApi } from "./contracts.js";
 
@@ -16,8 +17,31 @@ export interface WorkspaceInspector {
   inspectWorkspace(root: string): Promise<WorkspaceInspection>;
 }
 
+interface WorkspaceCreator extends WorkspaceInspector {
+  createWorkspace(input: { root: string; name: string; workspaceId: string }): Promise<WorkspaceInspection>;
+}
+
+/** A product-owned path, stable across launches and distinct from user-selected workspaces. */
+export function defaultWorkspaceRoot(userDataPath: string): string {
+  return join(userDataPath, "workspaces", "default");
+}
+
+/** Opens the stable first-run workspace, creating it only when it does not yet exist. */
+export async function openOrCreateDefaultWorkspace(engine: WorkspaceCreator, userDataPath: string): Promise<WorkspaceInspection> {
+  const root = defaultWorkspaceRoot(userDataPath);
+  try {
+    return await engine.inspectWorkspace(root);
+  } catch (error) {
+    if (!(error && typeof error === "object" && "code" in error && error.code === "WorkspaceNotFound")) throw error;
+  }
+  return engine.createWorkspace({ root, name: "My AI-Mo-To Workspace", workspaceId: "default" });
+}
+
 export function createDesktopApi(engine: WorkspaceInspector): DesktopApi {
   return {
+    async openDefaultWorkspace(): Promise<WorkspaceInspection> {
+      throw new Error("openDefaultWorkspace must be provided by the Electron main process.");
+    },
     async selectWorkspace(): Promise<WorkspaceInspection | undefined> {
       throw new Error("selectWorkspace must be provided by the Electron main process.");
     },
@@ -25,7 +49,11 @@ export function createDesktopApi(engine: WorkspaceInspector): DesktopApi {
   };
 }
 
-export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: WorkspaceInspector): void {
+export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: WorkspaceInspector, defaultWorkspace?: WorkspaceInspection): void {
+  runtime.ipcMain.handle("workspace:default", async () => {
+    if (!defaultWorkspace) throw new Error("The default workspace has not been initialized.");
+    return engine.inspectWorkspace(defaultWorkspace.root);
+  });
   runtime.ipcMain.handle("workspace:inspect", async (_event: unknown, root: unknown) => {
     if (typeof root !== "string") throw new Error("workspace root must be a string");
     return engine.inspectWorkspace(root);
@@ -50,6 +78,8 @@ export async function openDesktopWindow(
 
 interface ElectronApplication {
   whenReady(): Promise<void>;
+  getPath(name: "userData"): string;
+  isPackaged: boolean;
   on(event: "activate" | "window-all-closed", listener: () => void): void;
   quit(): void;
 }
@@ -60,9 +90,12 @@ interface ElectronRuntime extends ElectronMainRuntime { app: ElectronApplication
 export async function launchDesktop(): Promise<void> {
   const require = createRequire(import.meta.url);
   const runtime = require("electron") as ElectronRuntime;
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (runtime.app.isPackaged && resourcesPath) process.env.AIMOTO_BUILTIN_MODULES_DIR = join(resourcesPath, "modules");
   const engine = new WorkspaceEngine();
   await runtime.app.whenReady();
-  registerDesktopIpc(runtime, engine);
+  const defaultWorkspace = await openOrCreateDefaultWorkspace(engine, runtime.app.getPath("userData"));
+  registerDesktopIpc(runtime, engine, defaultWorkspace);
   const preload = fileURLToPath(new URL("./preload.js", import.meta.url));
   const renderer = fileURLToPath(new URL("./renderer.html", import.meta.url));
   await openDesktopWindow(runtime, { preload, renderer });

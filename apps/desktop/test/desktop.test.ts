@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { screenFor } from "../src/contracts.js";
-import { openDesktopWindow, registerDesktopIpc } from "../src/main.js";
+import { defaultWorkspaceRoot, openDesktopWindow, openOrCreateDefaultWorkspace, registerDesktopIpc } from "../src/main.js";
 import { exposeDesktopApi } from "../src/preload.js";
 
 describe("desktop shell", () => {
@@ -8,18 +8,31 @@ describe("desktop shell", () => {
     expect(screenFor().views.map((view) => view.id)).toEqual(["files", "tasks"]);
   });
 
-  it("keeps renderer access to two allow-listed IPC calls", () => {
+  it("keeps renderer access to three allow-listed IPC calls", () => {
     const expose = vi.fn(); const invoke = vi.fn();
     exposeDesktopApi({ contextBridge: { exposeInMainWorld: expose }, ipcRenderer: { invoke } });
     const api = expose.mock.calls[0]?.[1] as { inspectWorkspace(root: string): Promise<unknown> };
+    (api as typeof api & { openDefaultWorkspace(): Promise<unknown> }).openDefaultWorkspace();
     api.inspectWorkspace("C:/work");
+    expect(invoke).toHaveBeenCalledWith("workspace:default");
     expect(invoke).toHaveBeenCalledWith("workspace:inspect", "C:/work");
   });
 
-  it("registers workspace selection and inspection in main", () => {
+  it("uses one deterministic product-owned default workspace", async () => {
+    const root = defaultWorkspaceRoot("C:/Users/Keno/AppData/Roaming/AI-Mo-To");
+    expect(root).toMatch(/workspaces[\\/]default$/);
+    const inspectWorkspace = vi.fn().mockRejectedValueOnce({ code: "WorkspaceNotFound" });
+    const createWorkspace = vi.fn().mockResolvedValue({ root, workspaceId: "default", name: "My AI-Mo-To Workspace" });
+    await expect(openOrCreateDefaultWorkspace({ inspectWorkspace, createWorkspace }, "C:/Users/Keno/AppData/Roaming/AI-Mo-To")).resolves.toMatchObject({ workspaceId: "default" });
+    await openOrCreateDefaultWorkspace({ inspectWorkspace: vi.fn().mockResolvedValue({ root, workspaceId: "default" }), createWorkspace }, "C:/Users/Keno/AppData/Roaming/AI-Mo-To");
+    expect(createWorkspace).toHaveBeenCalledTimes(1);
+    expect(createWorkspace).toHaveBeenCalledWith({ root, name: "My AI-Mo-To Workspace", workspaceId: "default" });
+  });
+
+  it("registers default, workspace selection, and inspection in main", () => {
     const handle = vi.fn();
-    registerDesktopIpc({ ipcMain: { handle }, dialog: { showOpenDialog: vi.fn() }, BrowserWindow: class { async loadFile() {} } }, { inspectWorkspace: vi.fn() });
-    expect(handle.mock.calls.map(([channel]) => channel)).toEqual(["workspace:inspect", "workspace:select"]);
+    registerDesktopIpc({ ipcMain: { handle }, dialog: { showOpenDialog: vi.fn() }, BrowserWindow: class { async loadFile() {} } }, { inspectWorkspace: vi.fn() }, { root: "C:/default" } as never);
+    expect(handle.mock.calls.map(([channel]) => channel)).toEqual(["workspace:default", "workspace:inspect", "workspace:select"]);
   });
 
   it("opens an isolated, sandboxed renderer", async () => {

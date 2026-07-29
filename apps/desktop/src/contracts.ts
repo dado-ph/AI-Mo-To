@@ -2,6 +2,8 @@ import type { WorkspaceInspection } from "@ai-mo-to/engine";
 import { nativeViewModel, type NativeViewModel } from "@ai-mo-to/ui-primitives";
 
 export interface DesktopApi {
+  /** Opens the local workspace that AI-Mo-To prepares during first launch. */
+  openDefaultWorkspace(): Promise<WorkspaceInspection>;
   selectWorkspace(): Promise<WorkspaceInspection | undefined>;
   inspectWorkspace(root: string): Promise<WorkspaceInspection>;
 }

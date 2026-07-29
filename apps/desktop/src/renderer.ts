@@ -5,6 +5,10 @@ export async function openWorkspace(api: DesktopApi): Promise<DesktopScreen> {
   return screenFor(await api.selectWorkspace());
 }
 
+export async function openDefaultWorkspace(api: DesktopApi): Promise<DesktopScreen> {
+  return screenFor(await api.openDefaultWorkspace());
+}
+
 function element<T extends Element>(selector: string): T {
   const found = document.querySelector<T>(selector);
   if (!found) throw new Error(`Missing renderer element: ${selector}`);
@@ -42,7 +46,10 @@ function render(screen: DesktopScreen): void {
 export function startRenderer(api: DesktopApi): void {
   const button = element<HTMLButtonElement>("#open-workspace");
   const status = element<HTMLElement>("#status");
-  render(screenFor());
+  void openDefaultWorkspace(api).then(render).catch((error: unknown) => {
+    status.classList.add("error");
+    status.textContent = error instanceof Error ? error.message : "Unable to open your default workspace.";
+  });
   button.addEventListener("click", async () => {
     button.disabled = true;
     status.classList.remove("error");

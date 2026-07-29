@@ -75,10 +75,13 @@ kind passes generic schema validation.
 `@ai-mo-to/storage` exposes lower-level `WorkspaceStore` and layout/path helpers.
 It is for local SQLite access; callers creating a store must call `close()`.
 
-## Foundry (library only)
+## Foundry and the built-in Habit Tracker
 
-`Foundry` needs caller-supplied hooks and has no built-in model provider,
-registry, or CLI. `FoundryRequest` is `{ requestId, workspaceId, text }`; a
+`Foundry` needs caller-supplied hooks and has no generic model provider or
+registry. The CLI includes one deliberate reference flow: `aimoto agent habit
+plan` uses a deterministic local generator to prepare a Habit Tracker proposal,
+which must still be approved through the engine. `FoundryRequest` is
+`{ requestId, workspaceId, text }`; a
 `ModulePlan` adds module ID/display name, outcomes, records, views, commands,
 events, and requested capabilities. A successful generated result contains an
 `install-generated` proposal with `{ moduleId, version, digest, directory }`.
@@ -114,7 +117,7 @@ this release. Keep the staged module directory present and byte-identical from
 `Foundry.stage()` through engine approval: the install ChangeSet records that
 directory as its local source, and approval recomputes its digest from disk.
 
-## Snapshots (library only)
+## Snapshots
 
 `SnapshotInput` requires workspace identity/revision, a serializable workspace
 manifest, module bundle bytes plus schemas, serializable `data` and `context`,
@@ -141,12 +144,16 @@ applies it. For an approved restore, call
 then approve its exact ChangeSet digest. The CLI equivalent is
 `aimoto snapshot restore-propose <snapshot-id>` followed by `aimoto apply`.
 
-## Module host and SDK (library only)
+## Module host and SDK
 
 `ModuleHost` starts a Node child process, sends `module.initialize`, and invokes
 commands through framed JSON-RPC. The entrypoint must itself implement the
 framed protocol; defining a `ModuleHandler` type alone does not create a
-dispatcher. No module dispatcher or broker is shipped in this release.
+dispatcher. `WorkspaceEngine.mintContext()` and `invokeModule()` provide the
+engine-owned broker boundary for a host call, including workspace/module/revision
+binding, expiry, operation budget, authority ceiling, and required capability
+checks. The host remains a local-process supervisor rather than a security
+sandbox.
 
 Save this complete minimal child-process handler as `module-entrypoint.mjs`.
 It uses only Node built-ins, reads `Content-Length` frames from stdin, and sends

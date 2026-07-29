@@ -129,10 +129,16 @@ async function bundleFiles(directory: string, relative = ""): Promise<Array<{ pa
   return files;
 }
 
+function builtInModulesRoot(): string {
+  // The installed desktop app supplies this directory from its packaged
+  // resources; source and CLI builds retain the repository-relative default.
+  return process.env.AIMOTO_BUILTIN_MODULES_DIR ?? join(fileURLToPath(new URL("../../../", import.meta.url)), "modules");
+}
+
 async function builtInModulePins(): Promise<WorkspaceManifest["modules"]> {
-  const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const modulesRoot = builtInModulesRoot();
   return Promise.all(["files", "tasks"].map(async (name) => {
-    const directory = join(repositoryRoot, "modules", name);
+    const directory = join(modulesRoot, name);
     const manifest = JSON.parse(await readFile(join(directory, "module.json"), "utf8")) as { moduleId: string; version: string };
     return {
       moduleId: manifest.moduleId,
@@ -146,7 +152,7 @@ async function builtInModulePins(): Promise<WorkspaceManifest["modules"]> {
 function moduleBundleDirectory(root: string, module: WorkspaceManifest["modules"][number]): string {
   if (module.source.kind === "builtin") {
     const name = module.source.reference.replace(/^builtin:/, "");
-    return join(fileURLToPath(new URL("../../../", import.meta.url)), "modules", name);
+    return join(builtInModulesRoot(), name);
   }
   return join(root, ".aimoto", "modules", "local", module.digest.slice("sha256:".length));
 }
