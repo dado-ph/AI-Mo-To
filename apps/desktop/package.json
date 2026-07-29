@@ -7,11 +7,22 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "start": "electron .",
+    "dist": "pnpm run build && electron-builder --win nsis",
     "test": "vitest run"
   },
   "dependencies": {
     "@ai-mo-to/engine": "workspace:*",
     "@ai-mo-to/ui-primitives": "workspace:*"
   },
-  "devDependencies": { "electron": "^37.2.0" }
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "dev.aimoto.desktop",
+    "productName": "AI-Mo-To",
+    "directories": { "output": "release" },
+    "files": ["dist/**", "package.json", "!**/*.tsbuildinfo"],
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true }
+  }
 }
