@@ -47,6 +47,9 @@ importers:
       '@ai-mo-to/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@ai-mo-to/snapshot':
+        specifier: workspace:*
+        version: link:../snapshot
       '@ai-mo-to/storage':
         specifier: workspace:*
         version: link:../storage
