@@ -12,6 +12,7 @@ import { EngineError, WorkspaceEngine } from "../src/index.js";
 import { type ChangeSet } from "@ai-mo-to/protocol";
 import {
   digestBundle,
+  createHabitTrackerBundle,
   proposalToModuleInstallChangeSet,
   type FoundryProposal
 } from "@ai-mo-to/foundry";
@@ -122,6 +123,71 @@ describe("WorkspaceEngine", () => {
       .rejects.toMatchObject({ code: "ModuleHostFault" });
   });
 
+  it("executes durable Files and Tasks commands with engine-derived metadata and version preconditions", async () => {
+    const root = await temporaryWorkspace();
+    const engine = new WorkspaceEngine();
+    await engine.createWorkspace({ root, name: "Household Work" });
+    const clock = { now: new Date("2026-07-29T08:00:00.000Z") };
+    const now = () => clock.now;
+
+    const task = await engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.tasks", command: "create", now,
+      input: { taskId: "buy-rice", title: "Buy rice", notes: "For dinner", dueAt: null }
+    });
+    expect(task).toMatchObject({
+      recordId: "buy-rice", version: 1,
+      data: { title: "Buy rice", status: "open", version: 1, createdAt: "2026-07-29T08:00:00.000Z" }
+    });
+
+    clock.now = new Date("2026-07-29T09:00:00.000Z");
+    const completed = await engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.tasks", command: "complete", now,
+      input: { taskId: "buy-rice", expectedVersion: 1 }
+    });
+    expect(completed).toMatchObject({
+      recordId: "buy-rice", version: 2,
+      data: { status: "done", version: 2, updatedAt: "2026-07-29T09:00:00.000Z" }
+    });
+    await expect(engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.tasks", command: "reopen", now,
+      input: { taskId: "buy-rice", expectedVersion: 1 }
+    })).rejects.toMatchObject({ code: "VersionConflict" });
+
+    await engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.files", command: "register", now,
+      input: { fileId: "meal-plan", name: "Meal plan", relativePath: "files/meal-plan.txt", kind: "file", size: 42 }
+    });
+    expect(await engine.listBuiltInRecords(root, "aimoto.files")).toMatchObject([
+      { recordId: "meal-plan", data: { name: "Meal plan", relativePath: "files/meal-plan.txt" } }
+    ]);
+
+    const reopened = new WorkspaceEngine();
+    await expect(reopened.getBuiltInRecord(root, "aimoto.tasks", "buy-rice"))
+      .resolves.toMatchObject({ version: 2, data: { status: "done" } });
+  });
+
+  it("rejects invalid built-in command data before mutation", async () => {
+    const root = await temporaryWorkspace();
+    const engine = new WorkspaceEngine();
+    await engine.createWorkspace({ root, name: "Validated Records" });
+
+    await expect(engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.files", command: "register",
+      input: { fileId: "escape", name: "Escape", relativePath: "../secret.txt", kind: "file" }
+    })).rejects.toMatchObject({ code: "ValidationFailed" });
+    await expect(engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.tasks", command: "create",
+      input: { taskId: "empty", title: " " }
+    })).rejects.toMatchObject({ code: "ValidationFailed" });
+    await expect(engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.tasks", command: "delete",
+      input: { taskId: "anything", expectedVersion: 1 }
+    })).rejects.toMatchObject({ code: "CommandNotFound" });
+
+    expect(await engine.listBuiltInRecords(root, "aimoto.files")).toEqual([]);
+    expect(await engine.listBuiltInRecords(root, "aimoto.tasks")).toEqual([]);
+  });
+
   it("binds approval to one exact ChangeSet and rejects a stale proposal", async () => {
     const root = await temporaryWorkspace();
     const engine = new WorkspaceEngine();
@@ -188,18 +254,42 @@ describe("WorkspaceEngine", () => {
         approvedAt: "2026-07-29T00:02:00.000Z"
       }
     })).rejects.toMatchObject({ code: "ProposalStale" });
+
+    const evidence = (await engine.inspectWorkspace(root)).evidence;
+    expect(evidence.revisions).toEqual([
+      expect.objectContaining({ revision: 0, reason: "workspace.created" }),
+      expect.objectContaining({ revision: 1, reason: "proposal.committed" })
+    ]);
+    expect(evidence.proposals).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        proposalId: firstProposal.proposalId,
+        changeSetDigest: firstProposal.changeSetDigest,
+        status: "committed",
+        appliedRevision: 1
+      })
+    ]));
+    expect(evidence.approvals).toEqual([expect.objectContaining({
+      proposalId: firstProposal.proposalId,
+      changeSetDigest: firstProposal.changeSetDigest,
+      principalId: "test-user"
+    })]);
+    expect(evidence.recordHealth).toEqual({
+      status: "ok", totalRecords: 0, totalEvents: 0, collections: []
+    });
   });
 
   it("installs an approved, digest-verified generated Habit Tracker bundle", async () => {
     const root = await temporaryWorkspace();
     const engine = new WorkspaceEngine();
     const workspace = await engine.createWorkspace({ root, name: "Habit Workspace" });
-    const moduleJson = '{"moduleId":"local.habit-tracker","version":"0.1.0"}';
-    const files = [{ path: "module.json", content: moduleJson }];
+    const bundle = createHabitTrackerBundle();
+    const files = bundle.files;
     const digest = digestBundle(files);
     const directory = join(root, "foundry-staging", digest.slice("sha256:".length));
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, "module.json"), moduleJson);
+    for (const file of files) {
+      await mkdir(join(directory, file.path, ".."), { recursive: true });
+      await writeFile(join(directory, file.path), file.content);
+    }
     const generated: FoundryProposal = {
       kind: "install-generated",
       requestId: "habit-request",
@@ -235,8 +325,36 @@ describe("WorkspaceEngine", () => {
     });
 
     expect(committed.modules).toEqual(expect.arrayContaining([expect.objectContaining({ moduleId: "local.habit-tracker", digest })]));
-    await expect(readFile(join(root, ".aimoto", "modules", "local", digest.slice(7), "module.json"), "utf8"))
-      .resolves.toBe(moduleJson);
+    await expect(engine.listInstalledModuleViews(root, "local.habit-tracker")).resolves.toMatchObject([
+      { id: "habits", title: "Habits", kind: "list", collection: "habit" },
+      { id: "daily-check-in", title: "Daily check-in", kind: "form", collection: "habit-entry" },
+      { id: "history", title: "Completion history", kind: "timeline", collection: "habit-entry" }
+    ]);
+    const habit = await engine.executeHabitTrackerCommand({
+      root, command: "create-habit", input: { habitId: "meditate", name: "Meditate" }
+    });
+    await engine.executeHabitTrackerCommand({
+      root, command: "log-completion",
+      input: { entryId: "meditate-2026-07-29", habitId: habit.recordId, completedOn: "2026-07-29" }
+    });
+    await expect(engine.listHabitTrackerRecords(root, "habit-entry")).resolves.toMatchObject([
+      { recordId: "meditate-2026-07-29", data: { habitId: "meditate", completedOn: "2026-07-29" } }
+    ]);
+    const snapshot = await engine.createSnapshot(root);
+    await engine.executeHabitTrackerCommand({
+      root, command: "create-habit", input: { habitId: "temporary", name: "Temporary" }
+    });
+    const restore = await engine.createSnapshotRestoreProposal({
+      root, snapshotId: snapshot.snapshotId, proposalId: "45a0a6a9-f2b8-4bd6-a288-9ea0139c02c5"
+    });
+    await engine.approveProposal({ root, approval: {
+      schemaVersion: "1.0.0", approvalId: "5d47936b-2b87-4bac-8841-ed2613236513",
+      proposalId: restore.proposalId, workspaceId: workspace.workspaceId, baseRevision: 1,
+      changeSetDigest: restore.changeSetDigest, approvedAt: "2026-07-29T00:02:00.000Z"
+    }});
+    await expect(engine.listHabitTrackerRecords(root, "habit")).resolves.toEqual([
+      expect.objectContaining({ recordId: "meditate", version: 1, data: { habitId: "meditate", name: "Meditate" } })
+    ]);
   });
 
   it("creates, verifies, lists, and safely plans recovery snapshots", async () => {
@@ -258,7 +376,23 @@ describe("WorkspaceEngine", () => {
     const root = await temporaryWorkspace();
     const engine = new WorkspaceEngine();
     const workspace = await engine.createWorkspace({ root, name: "Recoverable Workspace" });
+    await engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.files", command: "register", now: () => new Date("2026-07-29T00:00:00.000Z"),
+      input: { fileId: "plan", name: "Original plan", relativePath: "files/plan.txt", kind: "file" }
+    });
+    await engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.tasks", command: "create", now: () => new Date("2026-07-29T00:00:00.000Z"),
+      input: { taskId: "review", title: "Review original", notes: "", dueAt: null }
+    });
     const snapshot = await engine.createSnapshot(root);
+    await engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.files", command: "remove", now: () => new Date("2026-07-29T00:00:30.000Z"),
+      input: { fileId: "plan", expectedVersion: 1 }
+    });
+    await engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.tasks", command: "complete", now: () => new Date("2026-07-29T00:00:30.000Z"),
+      input: { taskId: "review", expectedVersion: 1 }
+    });
     const changed = await engine.createProposal({
       root,
       proposalId: "2c598c7f-1aef-4f6d-aecf-b6c4dc71410e",
@@ -274,11 +408,24 @@ describe("WorkspaceEngine", () => {
     }});
     const restore = await engine.createSnapshotRestoreProposal({ root, snapshotId: snapshot.snapshotId, proposalId: "d3a1e979-2ae6-4af4-bd0e-6e67058df4f5" });
     expect(restore.changeSet).toMatchObject({ baseRevision: 1, operations: [expect.objectContaining({ kind: "workspace.restore-snapshot", input: expect.objectContaining({ snapshotId: snapshot.snapshotId }) })] });
+    await expect(engine.approveProposal({ root, approval: {
+      schemaVersion: "1.0.0", approvalId: "e45546d9-6e17-424c-b18d-47a0eaf70d00", proposalId: restore.proposalId,
+      workspaceId: workspace.workspaceId, baseRevision: 1, changeSetDigest: `sha256:${"0".repeat(64)}`, approvedAt: "2026-07-29T00:01:30.000Z",
+    }})).rejects.toMatchObject({ code: "ValidationFailed" });
+    await expect(engine.getBuiltInRecord(root, "aimoto.tasks", "review")).resolves.toMatchObject({
+      version: 2, data: { status: "done" }
+    });
     const recovered = await engine.approveProposal({ root, approval: {
       schemaVersion: "1.0.0", approvalId: "e45546d9-6e17-424c-b18d-47a0eaf70d0f", proposalId: restore.proposalId,
       workspaceId: workspace.workspaceId, baseRevision: 1, changeSetDigest: restore.changeSetDigest, approvedAt: "2026-07-29T00:02:00.000Z",
     }});
     expect(recovered).toMatchObject({ revision: 2, authorityMode: "suggest" });
+    await expect(engine.getBuiltInRecord(root, "aimoto.files", "plan")).resolves.toMatchObject({
+      version: 1, data: { name: "Original plan", relativePath: "files/plan.txt" }
+    });
+    await expect(engine.getBuiltInRecord(root, "aimoto.tasks", "review")).resolves.toMatchObject({
+      version: 1, data: { title: "Review original", status: "open" }
+    });
     const store = new (await import("@ai-mo-to/storage")).WorkspaceStore(workspaceDatabasePath(root));
     try { expect(store.listRevisions().map((entry) => entry.revision)).toEqual([0, 1, 2]); } finally { store.close(); }
   });
@@ -287,6 +434,10 @@ describe("WorkspaceEngine", () => {
     const root = await temporaryWorkspace();
     const engine = new WorkspaceEngine();
     const workspace = await engine.createWorkspace({ root, name: "Stale Recovery" });
+    await engine.executeBuiltInCommand({
+      root, moduleId: "aimoto.tasks", command: "create",
+      input: { taskId: "safe", title: "Must remain", notes: "", dueAt: null }
+    });
     const snapshot = await engine.createSnapshot(root);
     const restore = await engine.createSnapshotRestoreProposal({ root, snapshotId: snapshot.snapshotId, proposalId: "a1dc3b3c-3aa5-4446-98da-b9f6cbc60ff9" });
     const advance = await engine.createProposal({ root, proposalId: "7e4c7f65-5a5e-4b87-9efa-ecc70cdd1c58", changeSet: {
@@ -296,5 +447,32 @@ describe("WorkspaceEngine", () => {
     await engine.approveProposal({ root, approval: { schemaVersion: "1.0.0", approvalId: "5e2c723a-706c-4bc8-9c32-c6f0c7de5e08", proposalId: advance.proposalId, workspaceId: workspace.workspaceId, baseRevision: 0, changeSetDigest: advance.changeSetDigest, approvedAt: "2026-07-29T00:01:00.000Z" } });
     await expect(engine.approveProposal({ root, approval: { schemaVersion: "1.0.0", approvalId: "71844b69-2b6e-4fca-b593-7a75d83df667", proposalId: restore.proposalId, workspaceId: workspace.workspaceId, baseRevision: 0, changeSetDigest: restore.changeSetDigest, approvedAt: "2026-07-29T00:02:00.000Z" } })).rejects.toMatchObject({ code: "ProposalStale" });
     await expect(engine.inspectWorkspace(root)).resolves.toMatchObject({ revision: 1, authorityMode: "assist" });
+    await expect(engine.getBuiltInRecord(root, "aimoto.tasks", "safe")).resolves.toMatchObject({
+      version: 1, data: { title: "Must remain" }
+    });
+  });
+
+  it("enforces AuthorityStateGuard in observe mode", async () => {
+    const root = await temporaryWorkspace();
+    const engine = new WorkspaceEngine();
+    // Create workspace with dynamic randomized prompt/name
+    const randomPrompt = `Workspace prompt ${Math.random().toString(36).substring(2, 10)}`;
+    const workspace = await engine.createWorkspace({ root, name: randomPrompt });
+
+    // Advance to observe mode by writing manifest directly for testing read-only state
+    const manifestPath = join(root, ".aimoto", "workspace.json");
+    const manifestContent = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifestContent.authorityMode = "observe";
+    await writeFile(manifestPath, JSON.stringify(manifestContent, null, 2));
+
+    // Observe mode should block direct mutation commands
+    await expect(
+      engine.executeBuiltInCommand({
+        root,
+        moduleId: "aimoto.tasks",
+        command: "create",
+        input: { taskId: "task1", title: "Forbidden write", notes: "", dueAt: null }
+      })
+    ).rejects.toThrow(/observe/);
   });
 });

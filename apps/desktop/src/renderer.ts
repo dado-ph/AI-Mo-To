@@ -1,12 +1,64 @@
 import type { DesktopApi, DesktopScreen } from "./contracts.js";
-import { screenFor } from "./contracts.js";
+import { authorityBadge, type NativeViewModel } from "@ai-mo-to/ui-primitives";
+
+const rendererViews: DesktopScreen["views"] = [
+  {
+    id: "files",
+    title: "Files",
+    emptyState: "No files yet. Ask your AI to add or organize material here.",
+    description: "Workspace knowledge stays local and visible.",
+    icon: "folder",
+    actions: [{ id: "explain-files", label: "What belongs here?", kind: "secondary" }],
+    columns: [{ id: "name", label: "Name" }, { id: "updated", label: "Updated" }]
+  },
+  {
+    id: "tasks",
+    title: "Tasks",
+    emptyState: "No tasks yet. Tell your AI what outcome you want.",
+    description: "Work remains concrete, inspectable, and under your control.",
+    icon: "check",
+    actions: [{ id: "explain-tasks", label: "Try an example", kind: "primary" }],
+    columns: [{ id: "task", label: "Task" }, { id: "status", label: "Status" }]
+  }
+];
+
+function screenFor(workspace?: NonNullable<DesktopScreen["workspace"]>): DesktopScreen {
+  const records = { files: [], tasks: [] };
+  const generated = { generatedViews: [], habitRecords: { habits: [], entries: [] } };
+  if (!workspace) return { views: rendererViews, records, ...generated };
+
+  const badge = authorityBadge(workspace.authorityMode);
+  return {
+    workspace,
+    views: rendererViews,
+    authority: {
+      label: badge.label,
+      tone: badge.tone
+    },
+    records,
+    ...generated
+  };
+}
+
+export async function loadScreen(api: DesktopApi, workspace: NonNullable<DesktopScreen["workspace"]>): Promise<DesktopScreen> {
+  const hasHabits = workspace.modules.some((module) => module.moduleId === "local.habit-tracker");
+  const [files, tasks, generatedViews, habits, entries] = await Promise.all([
+    api.listRecords(workspace.root, "aimoto.files"),
+    api.listRecords(workspace.root, "aimoto.tasks"),
+    hasHabits ? api.listModuleViews(workspace.root, "local.habit-tracker") : [],
+    hasHabits ? api.listHabitRecords(workspace.root, "habit") : [],
+    hasHabits ? api.listHabitRecords(workspace.root, "habit-entry") : []
+  ]);
+  return { ...screenFor(workspace), records: { files, tasks }, generatedViews, habitRecords: { habits, entries } };
+}
 
 export async function openWorkspace(api: DesktopApi): Promise<DesktopScreen> {
-  return screenFor(await api.selectWorkspace());
+  const workspace = await api.selectWorkspace();
+  return workspace ? loadScreen(api, workspace) : screenFor();
 }
 
 export async function openDefaultWorkspace(api: DesktopApi): Promise<DesktopScreen> {
-  return screenFor(await api.openDefaultWorkspace());
+  return loadScreen(api, await api.openDefaultWorkspace());
 }
 
 function element<T extends Element>(selector: string): T {
@@ -15,54 +67,40 @@ function element<T extends Element>(selector: string): T {
   return found;
 }
 
-function render(screen: DesktopScreen): void {
+export function renderScreen(screen: DesktopScreen): void {
   const status = element<HTMLElement>("#status");
-  const workspace = element<HTMLElement>("#workspace");
-  const views = element<HTMLElement>("#views");
-  workspace.replaceChildren();
-  views.replaceChildren();
+  const workspaceName = element<HTMLElement>("#workspace-name");
+  const workspacePath = element<HTMLElement>("#workspace-path");
+  const authorityLabel = element<HTMLElement>("#authority-label");
+  const viewsContainer = element<HTMLElement>("#views");
+
+  viewsContainer.replaceChildren();
+
   if (screen.workspace) {
-    workspace.hidden = false;
-    const title = document.createElement("strong");
-    title.textContent = `${screen.workspace.name} · revision ${screen.workspace.revision}`;
-    const root = document.createElement("p");
-    root.textContent = screen.workspace.root;
-    workspace.append(title, root);
-    status.textContent = `Opened ${screen.workspace.modules.length} trusted modules.`;
+    workspaceName.textContent = screen.workspace.name;
+    workspacePath.textContent = screen.workspace.root;
+    status.textContent = `Revision ${screen.workspace.revision} · ${screen.workspace.modules.length} trusted modules · Healthy`;
   } else {
-    workspace.hidden = true;
-    status.textContent = "Choose a workspace created with AI-Mo-To.";
+    workspaceName.textContent = "AI-Mo-To";
+    workspacePath.textContent = "Choose a workspace";
+    status.textContent = "No workspace open.";
   }
+
+  if (screen.authority) {
+    authorityLabel.textContent = screen.authority.label;
+  }
+
   for (const view of screen.views) {
     const card = document.createElement("article");
-    const title = document.createElement("h2"); title.textContent = view.title;
-    const description = document.createElement("p"); description.textContent = view.description;
-    const empty = document.createElement("p"); empty.className = "empty"; empty.textContent = view.emptyState;
-    card.append(title, description, empty);
-    views.append(card);
+    card.className = "view-card";
+
+    const h2 = document.createElement("h2");
+    h2.textContent = view.title;
+
+    const p = document.createElement("p");
+    p.textContent = (view as NativeViewModel).description ?? view.emptyState;
+
+    card.append(h2, p);
+    viewsContainer.append(card);
   }
 }
-
-export function startRenderer(api: DesktopApi): void {
-  const button = element<HTMLButtonElement>("#open-workspace");
-  const status = element<HTMLElement>("#status");
-  void openDefaultWorkspace(api).then(render).catch((error: unknown) => {
-    status.classList.add("error");
-    status.textContent = error instanceof Error ? error.message : "Unable to open your default workspace.";
-  });
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    status.classList.remove("error");
-    status.textContent = "Opening workspace chooser…";
-    try {
-      render(await openWorkspace(api));
-    } catch (error) {
-      status.classList.add("error");
-      status.textContent = error instanceof Error ? error.message : "Unable to open that workspace.";
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
-
-if (typeof window !== "undefined" && window.aimoto) startRenderer(window.aimoto);

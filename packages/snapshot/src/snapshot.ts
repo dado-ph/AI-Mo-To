@@ -83,6 +83,22 @@ export async function readVerifiedWorkspaceManifest(
   };
 }
 
+export async function readVerifiedSnapshotData(
+  root: string,
+  snapshotId: string,
+): Promise<{ readonly data: unknown; readonly dataDigest: string; readonly snapshot: SnapshotManifest }> {
+  const verification = await verifySnapshot(root, snapshotId);
+  if (!verification.valid || !verification.manifest) {
+    throw new Error(`Snapshot verification failed: ${verification.errors.join("; ")}`);
+  }
+  const content = await readFile(join(root, "objects", verification.manifest.data.digest));
+  return {
+    data: JSON.parse(content.toString("utf8")) as unknown,
+    dataDigest: verification.manifest.data.digest,
+    snapshot: verification.manifest,
+  };
+}
+
 export interface RestorePlan {
   readonly kind: "restore-as-new-revision";
   readonly snapshotId: string;

@@ -12,6 +12,13 @@ pnpm build
 In this checkout, invoke it as `pnpm --filter @ai-mo-to/cli aimoto ...`.
 `--json` writes one JSON envelope to standard output. Without it, successful
 inspection is human-readable and other successful commands are pretty JSON.
+An installed CLI is invoked directly as `aimoto ...`.
+
+For an unfamiliar coding agent, `aimoto --help --json` is the discovery entry
+point. It returns a versioned JSON envelope containing the supported workflow
+and the approval rule. The agent should then run `doctor`, `init`, `inspect`,
+and a planning command. Planning never grants approval: the human must review
+the exact proposal before the agent passes its ID and digest to `apply`.
 
 ## Complete approval quickstart
 
@@ -82,8 +89,14 @@ pnpm --filter @ai-mo-to/cli aimoto agent habit plan --workspace ./my-habits --re
 ## Commands
 
 ```
+aimoto init "<name>" [--root <path>] [--json]
 aimoto workspace create "<name>" [--root <path>] [--json]
+aimoto doctor [--workspace <path>] [--json]
 aimoto inspect [--workspace <path>] [--json]
+aimoto module views --module <id> [--workspace <path>] [--json]
+aimoto records list --module <aimoto.files|aimoto.tasks|local.habit-tracker> [--collection <habit|habit-entry>] [--workspace <path>] [--json]
+aimoto habit create --id <id> --name "<name>" [--workspace <path>] [--json]
+aimoto habit log --habit <id> --entry <id> --date <YYYY-MM-DD> [--workspace <path>] [--json]
 aimoto snapshot create [--workspace <path>] [--json]
 aimoto snapshot list [--workspace <path>] [--json]
 aimoto snapshot inspect <snapshot-id> [--workspace <path>] [--json]
@@ -92,11 +105,20 @@ aimoto snapshot restore-propose <snapshot-id> [--workspace <path>] [--json]
 aimoto agent habit plan --workspace <path> [--request "what you need"] [--json]
 aimoto plan --workspace <path> --set-authority <mode> [--json]
 aimoto apply --workspace <path> --proposal <id> --hash <sha256:digest> [--principal <id>] [--json]
+aimoto open [--workspace <path>] [--json]
 ```
 
 Paths are resolved relative to the current working directory. `workspace create`
-defaults its root to a lowercase, hyphenated name. `inspect`, `plan`, and
-`apply` default their workspace to `.`. The supported authority modes are
+defaults its root to a lowercase, hyphenated name; `init` is its shorter
+onboarding alias. `doctor` checks the Node and Windows runtime, creates and
+reopens a disposable workspace to verify the installed schema and built-in
+Files/Tasks resources, then removes only that probe directory. When given
+`--workspace`, it also verifies that workspace without changing it. An unhealthy
+result includes structured evidence and remediation and exits with status 1.
+`open` verifies the
+workspace and launches the installed desktop; set `AIMOTO_DESKTOP_PATH` when
+the executable is outside its normal per-user install location. `inspect`,
+`plan`, and `apply` default their workspace to `.`. The supported authority modes are
 `observe`, `suggest`, `assist`, `execute`, and `build`.
 
 `workspace create` rejects an empty name or a directory that already contains
@@ -133,7 +155,36 @@ the restore. It creates a new revision; it never replaces the old revision
 history. If the workspace changes after the proposal is created, approval is
 rejected as stale and you must propose the restore again.
 
+## Verify and use an installed Habit Tracker
+
+After the reviewed Habit Tracker proposal has been applied, an agent can verify
+the installed UI declarations and local records without executing generated
+module code:
+
+```powershell
+aimoto module views --module local.habit-tracker --workspace ./my-habits --json
+aimoto records list --module local.habit-tracker --collection habit --workspace ./my-habits --json
+aimoto records list --module local.habit-tracker --collection habit-entry --workspace ./my-habits --json
+```
+
+Record creation is a normal interaction with an already approved tool, not
+approval to install or change that tool. An agent must run these commands only
+after the user explicitly asks it to create or log the named habit:
+
+```powershell
+aimoto habit create --id meditation --name "Meditation" --workspace ./my-habits --json
+aimoto habit log --habit meditation --entry meditation-2026-07-29 --date 2026-07-29 --workspace ./my-habits --json
+```
+
+IDs are caller-selected stable identifiers. Logging requires an existing habit
+and an ISO calendar date. Duplicate IDs are rejected. `records list` is
+read-only and is also available for the installed `aimoto.files` and
+`aimoto.tasks` built-ins; their collection is inferred from the module.
+
 Run `aimoto`, `aimoto help`, or `aimoto --help` for the short usage display.
+Use `aimoto --help --json` when a program or coding agent is discovering the
+interface. Unknown commands with `--json` also return a normal error envelope,
+so callers never need to scrape the human usage display.
 
 ## Output and exit status
 
@@ -144,8 +195,14 @@ the envelope shape. Human-mode errors go to standard error as `Code: message`.
 
 | Command | `data` on JSON success |
 | --- | --- |
+| `init` | Workspace inspection; equivalent to `workspace create` |
 | `workspace create` | Workspace inspection: `root`, `workspaceId`, `name`, `revision`, `createdAt`, `modules`, `authorityMode`, `health` |
+| `doctor` | Runtime/workspace checks, aggregate health, and a suggested next action |
 | `inspect` | The same workspace inspection shape |
+| `module views` | Validated, inert view summaries from the installed module bundle |
+| `records list` | Local records for the selected supported module and collection |
+| `habit create` | The created Habit Tracker habit record |
+| `habit log` | The created completion-entry record |
 | `snapshot create` | Snapshot ID, creation time, and verified digest |
 | `snapshot list` | Available snapshot summaries |
 | `snapshot inspect` | Verification result and captured recovery metadata |
@@ -154,6 +211,7 @@ the envelope shape. Human-mode errors go to standard error as `Code: message`.
 | `agent habit plan` | Request, plain-language Habit Tracker plan, staged module details, and a pending digest-bound proposal |
 | `plan` | Proposal: `proposalId`, `workspaceId`, `baseRevision`, `changeSet`, `changeSetDigest`, `status`, `createdAt` |
 | `apply` | The resulting workspace inspection shape |
+| `open` | Launch result and the inspected workspace passed to the desktop |
 
 For example, the minimum fields needed from a plan are
 `{"ok":true,"data":{"proposalId":"...","changeSetDigest":"sha256:..."}}`.

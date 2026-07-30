@@ -20,6 +20,7 @@ export interface ModuleHostOptions {
   moduleId: string;
   entrypoint: string;
   nodeExecutable?: string;
+  startupTimeoutMs?: number;
   timeoutMs?: number;
   maximumFrameBytes?: number;
   maximumDiagnosticBytes?: number;
@@ -37,6 +38,7 @@ export class ModuleHost {
   constructor(options: ModuleHostOptions) {
     this.#options = {
       nodeExecutable: process.execPath,
+      startupTimeoutMs: 10_000,
       timeoutMs: 5_000,
       maximumFrameBytes: 1024 * 1024,
       maximumDiagnosticBytes: 64 * 1024,
@@ -92,10 +94,14 @@ export class ModuleHost {
       }
     });
 
-    await this.#request("module.initialize", {
-      protocolVersion: "1.0.0",
-      moduleId: this.#options.moduleId
-    });
+    await this.#request(
+      "module.initialize",
+      {
+        protocolVersion: "1.0.0",
+        moduleId: this.#options.moduleId
+      },
+      this.#options.startupTimeoutMs
+    );
   }
 
   async invoke(params: InvokeParams): Promise<JsonValue> {
@@ -120,7 +126,11 @@ export class ModuleHost {
     this.#child = undefined;
   }
 
-  async #request(method: string, params: JsonValue): Promise<JsonValue> {
+  async #request(
+    method: string,
+    params: JsonValue,
+    timeoutMs = this.#options.timeoutMs
+  ): Promise<JsonValue> {
     const child = this.#child;
     if (!child || child.exitCode !== null || this.#terminalError) {
       throw this.#terminalError ??
@@ -132,11 +142,11 @@ export class ModuleHost {
         this.#pending.delete(id);
         const error = new ModuleHostError(
           "HostTimeout",
-          `${method} exceeded ${this.#options.timeoutMs}ms`
+          `${method} exceeded ${timeoutMs}ms`
         );
         reject(error);
         this.#fail(error);
-      }, this.#options.timeoutMs);
+      }, timeoutMs);
       this.#pending.set(id, { resolve, reject, timer });
     });
     child.stdin.write(encodeFrame({ jsonrpc: "2.0", id, method, params }));

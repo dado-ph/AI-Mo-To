@@ -1,110 +1,131 @@
-# Get started with AI-Mo-To
+# Getting Started with AI-Mo-To
 
-AI-Mo-To is an installed Windows application that keeps small, local
-workspaces in one place. The application is what you use day to day; this
-repository is only needed when building the application from source or using
-its structured command-line interface.
+Welcome to **AI-Mo-To**! This guide walks you through setting up your first local workspace, understanding authority modes, staging an AI-generated Habit Tracker module, approving changes, and taking safety snapshots.
 
-## Open the installed app
+---
 
-Install AI-Mo-To from the Windows installer, then open **AI-Mo-To** from the
-Start menu. The current desktop app asks you to choose a workspace folder. If
-you already have one, select its folder and the app will show its name, trusted
-revision, installed modules, and Files and Tasks starting views.
+## 📌 Prerequisites
 
-The next onboarding slice makes first launch simpler: AI-Mo-To will open a
-useful default local workspace immediately, with Files, Tasks, recent activity,
-and workspace creation available before an AI engine is configured. Specific
-workspaces will remain separately owned and selectable from the shared app.
+To run AI-Mo-To, you need:
+* **Windows 10/11 x64** (for installer release)
+* Or **Node.js 22+** & **pnpm 11+** (if building from source)
 
-Until that slice lands, create your first workspace with the short local
-workflow below.
+---
 
-## Create your first workspace
+## 📦 Step 1: Open the Application or CLI
 
-Open PowerShell in a built source checkout. You need Node.js 22 or newer and
-pnpm. Install and build once:
+### Installed Application
+If you installed AI-Mo-To using the installer, launch **AI-Mo-To** from your Windows Start Menu. The desktop app will open and prompt you to select a workspace directory.
+
+### Source / Developer Checkout
+If you are developing locally, open PowerShell in the repository root and build the project once:
 
 ```powershell
 pnpm install
 pnpm build
 ```
 
-Create a folder called `my-first-workspace` beside the repository:
+---
+
+## 🛠️ Step 2: Create Your First Workspace
+
+Create a dedicated folder for your workspace:
 
 ```powershell
 $workspace = Join-Path (Get-Location) "my-first-workspace"
-pnpm --filter @ai-mo-to/cli aimoto workspace create "My first workspace" --root $workspace
+pnpm --filter @ai-mo-to/cli aimoto workspace create "My Workspace" --root $workspace
 ```
 
-You should see a local workspace at revision `0`, with the built-in Files and
-Tasks modules. Select this folder in the installed desktop app whenever you
-want to inspect it.
+Upon creation, AI-Mo-To generates a workspace at **Revision 0** with two built-in core modules:
+* **Files (`aimoto.files`)**: Local file indexing and knowledge management.
+* **Tasks (`aimoto.tasks`)**: Action item tracking and task management.
 
-## Ask for a Habit Tracker
-
-The first agent-driven proof is intentionally local and inspectable. It does
-not use an account, API key, or network request. Your request is passed to a
-deterministic reference generator that prepares a Habit Tracker with habits,
-daily check-ins, and completion history.
+Inspect your workspace state at any time:
 
 ```powershell
-$plan = pnpm --filter @ai-mo-to/cli aimoto agent habit plan --workspace $workspace --request "Track meditation every day" --json | ConvertFrom-Json
-$plan.data.plan
-```
-
-Read the plan before continuing. Two values bind your approval to this exact
-proposal:
-
-- `proposalId` identifies this installation request.
-- `changeSetDigest` is the fingerprint of the exact change you reviewed.
-
-Approve it only when the plan, requested capabilities, and module details make
-sense to you:
-
-```powershell
-pnpm --filter @ai-mo-to/cli aimoto apply --workspace $workspace --proposal $plan.data.proposal.proposalId --hash $plan.data.proposal.changeSetDigest --json
 pnpm --filter @ai-mo-to/cli aimoto inspect --workspace $workspace
 ```
 
-The inspection should show a later revision and three modules: Files, Tasks,
-and the Habit Tracker. If the workspace changes before approval, the proposal
-is stale and you must create and review a new one.
+---
 
-## Save a verified recovery point
+## 🛡️ Step 3: Understanding Authority Modes
 
-Create a snapshot before later structural changes:
+AI-Mo-To operates under **5 Monotonic Authority Modes** to ensure safety:
+
+| Authority Mode | Capabilities & Restrictions |
+| :--- | :--- |
+| **`observe`** | **Read-Only**: Workspace context can be inspected, but all write/mutation operations are blocked. |
+| **`suggest`** | **Planning Mode** *(Default)*: AI agents can generate plans and proposals (`ChangeSet`), but cannot apply them. |
+| **`assist`** | **Staging Mode**: Proposals can be prepared and human approvals recorded. |
+| **`execute`** | **Execution Mode**: Pre-approved proposals and schema-validated commands execute automatically. |
+| **`build`** | **Foundry Mode**: Full authority to stage and install new custom modules or modify core schemas. |
+
+---
+
+## 💡 Step 4: Ask for a Habit Tracker (Agent Staging Proof)
+
+AI-Mo-To includes a deterministic, inspectable local agent proof that generates a Habit Tracker tool without requiring network requests or external API keys:
 
 ```powershell
+# 1. Ask the agent for a Habit Tracker plan
+$plan = pnpm --filter @ai-mo-to/cli aimoto agent habit plan --workspace $workspace --request "Track daily meditation" --json | ConvertFrom-Json
+
+# 2. Inspect the generated proposal
+$plan.data.plan
+```
+
+Review the output. Notice two key fields:
+* **`proposalId`**: The unique identifier for this specific installation request.
+* **`changeSetDigest`**: The SHA-256 fingerprint of the exact diff you reviewed.
+
+---
+
+## ✅ Step 5: Approve and Apply the Proposal
+
+Before any state changes on disk, AI-Mo-To requires human approval binding the exact `proposalId` and `changeSetDigest`:
+
+```powershell
+# Apply the reviewed proposal using its proposalId and SHA-256 digest
+pnpm --filter @ai-mo-to/cli aimoto apply --workspace $workspace --proposal $plan.data.proposal.proposalId --hash $plan.data.proposal.changeSetDigest --json
+
+# Verify the workspace update
+pnpm --filter @ai-mo-to/cli aimoto inspect --workspace $workspace
+```
+
+Your workspace will now reflect **Revision 1** and include three installed modules: **Files**, **Tasks**, and **Habit Tracker**.
+
+---
+
+## 📸 Step 6: Create and Recover a Safety Snapshot
+
+Before making major structural updates, create a snapshot point:
+
+```powershell
+# Create a snapshot point
 $snapshot = pnpm --filter @ai-mo-to/cli aimoto snapshot create --workspace $workspace --json | ConvertFrom-Json
+
+# Inspect the created snapshot
 pnpm --filter @ai-mo-to/cli aimoto snapshot inspect $snapshot.data.snapshotId --workspace $workspace --json
 ```
 
-Recovery has a deliberate boundary. `snapshot restore-plan` explains what a
-recovery would change and changes nothing. `snapshot restore-propose` creates a
-pending proposal. Only `apply` with that proposal's exact digest restores the
-captured workspace configuration as a new revision. It never silently rolls
-back the old history.
+### Restoring State Safely
+Restoring a snapshot in AI-Mo-To follows a governed 2-step process:
+1. **`snapshot restore-propose`**: Generates a restoration proposal without touching workspace state.
+2. **`aimoto apply`**: Applies the proposal with human approval, restoring state as a **new revision** while preserving complete historical audit logs.
 
-## Build the installer from source
+---
 
-If you are building AI-Mo-To rather than using a provided installer, create the
-Windows NSIS package with:
+## ❓ Frequently Asked Questions & Troubleshooting
 
-```powershell
-pnpm install --frozen-lockfile
-pnpm --filter @ai-mo-to/desktop dist
-```
+### Q: What happens if a proposal application fails midway?
+**A**: AI-Mo-To automatically creates an internal pre-apply snapshot before any disk write. If an error occurs during proposal execution, state is automatically rolled back to the pre-apply snapshot.
 
-The installer is written to `apps/desktop/release/`. Run it to install
-AI-Mo-To for the current Windows user.
+### Q: Can an AI model execute arbitrary code on my PC?
+**A**: No. Modules execute in isolated host processes under strict capability declarations (`module.json`), and state-mutating commands require explicit human approval.
 
-## Current boundaries
+---
 
-The desktop app currently opens and inspects a selected workspace; the full
-graphical proposal, approval, record-editing, and recovery experience is still
-being developed. Snapshot recovery covers workspace configuration, not arbitrary
-files, exports, or external credentials, so keep ordinary backups as well.
+## 🔗 Next Steps
 
-For every command and its error handling, read the [command reference](manual/cli.md).
-For installer and desktop details, read the [desktop guide](../apps/desktop/README.md).
+* Read the [CLI Command Reference](manual/cli.md) for full argument lists.
+* Explore [Module Development](manual/module-development.md) to build your own custom tools.

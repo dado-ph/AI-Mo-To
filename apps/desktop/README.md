@@ -40,6 +40,21 @@ The repository's `desktop-installer` GitHub Actions workflow performs this
 same build on Windows and retains the installer as a workflow artifact for
 review. It does not create a GitHub Release or publish an installer.
 
+The installer makes `aimoto` shell-discoverable and installs the
+`aimoto-operate` agent skill into `%CODEX_HOME%\skills` when `CODEX_HOME` is
+set, or `%USERPROFILE%\.codex\skills` otherwise. The skill teaches Codex to
+route small personal-tool outcomes through AI-Mo-To's inspect, proposal,
+explicit approval, apply, and verification boundary. The uninstaller removes
+only a skill directory marked as owned by AI-Mo-To.
+
+Agent subprocesses do not need to inherit the interactive shell's `PATH`.
+The launcher has a stable per-user location at
+`%LOCALAPPDATA%\Microsoft\WindowsApps\aimoto.cmd`, and the installer records
+the actual application directory as `InstallPath` under
+`HKCU\Software\AI-Mo-To`. The bundled operator skill checks both locations.
+Automation should pass CLI values as separate arguments; it should not build a
+shell command string from workspace paths, requests, proposal IDs, or digests.
+
 ## One-time Electron install policy
 
 Electron downloads its desktop runtime in its package install script. The

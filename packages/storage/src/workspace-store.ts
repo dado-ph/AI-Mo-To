@@ -39,6 +39,25 @@ export interface StoredRevision {
   manifest: WorkspaceManifest;
 }
 
+export interface StoredApproval {
+  approvalId: string;
+  proposalId: string;
+  changeSetHash: string;
+  principalId: string;
+  approvedAt: string;
+}
+
+export interface RecordHealth {
+  status: "ok";
+  totalRecords: number;
+  totalEvents: number;
+  collections: readonly {
+    moduleId: string;
+    collectionId: string;
+    recordCount: number;
+  }[];
+}
+
 /** A durable record owned by a module collection. `data` is always a JSON object. */
 export interface StoredRecord<T extends Record<string, unknown> = Record<string, unknown>> {
   moduleId: string;
@@ -48,6 +67,23 @@ export interface StoredRecord<T extends Record<string, unknown> = Record<string,
   createdAt: string;
   updatedAt: string;
   data: T;
+}
+
+export interface StoredRecordEvent {
+  sequence: number;
+  occurredAt: string;
+  moduleId: string;
+  collectionId: string;
+  recordId: string;
+  eventType: string;
+  recordVersion: number;
+  payload: unknown;
+}
+
+export interface WorkspaceRecordSnapshot {
+  schemaVersion: 1;
+  records: readonly StoredRecord[];
+  events: readonly StoredRecordEvent[];
 }
 
 export class RecordStoreError extends Error {
@@ -198,18 +234,21 @@ export class WorkspaceStore {
   }): StoredRecord<T> {
     assertRecordId(input.recordId);
     input.validate?.(input.data);
+    this.#database.exec("BEGIN IMMEDIATE;");
     try {
       this.#database.prepare(`
         INSERT INTO module_records (module_id, collection_id, record_id, record_version, created_at, updated_at, data_json)
         VALUES (?, ?, ?, 1, ?, ?, ?)
       `).run(input.moduleId, input.collectionId, input.recordId, input.now, input.now, JSON.stringify(input.data));
+      this.#recordEvent(input, "record.created", 1, input.data);
+      this.#database.exec("COMMIT;");
     } catch (error) {
+      this.#database.exec("ROLLBACK;");
       if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) {
         throw new RecordStoreError("RecordExists", `Record ${input.recordId} already exists in ${input.collectionId}.`);
       }
       throw error;
     }
-    this.#recordEvent(input, "record.created", 1, input.data);
     return { moduleId: input.moduleId, collectionId: input.collectionId, recordId: input.recordId, version: 1, createdAt: input.now, updatedAt: input.now, data: input.data };
   }
 
@@ -229,6 +268,29 @@ export class WorkspaceStore {
     return rows.map((row) => this.#toRecord<T>(row));
   }
 
+  snapshotRecords(): WorkspaceRecordSnapshot {
+    const rows = this.#database.prepare(`
+      SELECT module_id, collection_id, record_id, record_version, created_at, updated_at, data_json
+      FROM module_records ORDER BY module_id, collection_id, record_id
+    `).all() as unknown as RecordRow[];
+    const events = this.#database.prepare(`
+      SELECT sequence, occurred_at, module_id, collection_id, record_id, event_type, record_version, payload_json
+      FROM record_events ORDER BY sequence
+    `).all() as unknown as Array<{
+      sequence: number; occurred_at: string; module_id: string; collection_id: string;
+      record_id: string; event_type: string; record_version: number; payload_json: string;
+    }>;
+    return {
+      schemaVersion: 1,
+      records: rows.map((row) => this.#toRecord(row)),
+      events: events.map((event) => ({
+        sequence: event.sequence, occurredAt: event.occurred_at, moduleId: event.module_id,
+        collectionId: event.collection_id, recordId: event.record_id, eventType: event.event_type,
+        recordVersion: event.record_version, payload: JSON.parse(event.payload_json) as unknown
+      }))
+    };
+  }
+
   updateRecord<T extends Record<string, unknown>>(input: {
     moduleId: string;
     collectionId: string;
@@ -240,29 +302,43 @@ export class WorkspaceStore {
   }): StoredRecord<T> {
     assertRecordId(input.recordId);
     input.validate?.(input.data);
-    const result = this.#database.prepare(`
-      UPDATE module_records SET record_version = record_version + 1, updated_at = ?, data_json = ?
-      WHERE module_id = ? AND collection_id = ? AND record_id = ? AND record_version = ?
-    `).run(input.now, JSON.stringify(input.data), input.moduleId, input.collectionId, input.recordId, input.expectedVersion);
-    if (result.changes !== 1) {
-      if (!this.getRecord(input.moduleId, input.collectionId, input.recordId)) {
-        throw new RecordStoreError("RecordNotFound", `Record ${input.recordId} does not exist in ${input.collectionId}.`);
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const result = this.#database.prepare(`
+        UPDATE module_records SET record_version = record_version + 1, updated_at = ?, data_json = ?
+        WHERE module_id = ? AND collection_id = ? AND record_id = ? AND record_version = ?
+      `).run(input.now, JSON.stringify(input.data), input.moduleId, input.collectionId, input.recordId, input.expectedVersion);
+      if (result.changes !== 1) {
+        if (!this.getRecord(input.moduleId, input.collectionId, input.recordId)) {
+          throw new RecordStoreError("RecordNotFound", `Record ${input.recordId} does not exist in ${input.collectionId}.`);
+        }
+        throw new RecordStoreError("VersionConflict", `Record ${input.recordId} changed before this update could be saved.`);
       }
-      throw new RecordStoreError("VersionConflict", `Record ${input.recordId} changed before this update could be saved.`);
+      const record = this.getRecord<T>(input.moduleId, input.collectionId, input.recordId)!;
+      this.#recordEvent(input, "record.updated", record.version, input.data);
+      this.#database.exec("COMMIT;");
+      return record;
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
     }
-    const record = this.getRecord<T>(input.moduleId, input.collectionId, input.recordId)!;
-    this.#recordEvent(input, "record.updated", record.version, input.data);
-    return record;
   }
 
   deleteRecord(input: { moduleId: string; collectionId: string; recordId: string; expectedVersion: number; now: string }): void {
-    const existing = this.getRecord(input.moduleId, input.collectionId, input.recordId);
-    if (!existing) throw new RecordStoreError("RecordNotFound", `Record ${input.recordId} does not exist in ${input.collectionId}.`);
-    const result = this.#database.prepare(`
-      DELETE FROM module_records WHERE module_id = ? AND collection_id = ? AND record_id = ? AND record_version = ?
-    `).run(input.moduleId, input.collectionId, input.recordId, input.expectedVersion);
-    if (result.changes !== 1) throw new RecordStoreError("VersionConflict", `Record ${input.recordId} changed before it could be removed.`);
-    this.#recordEvent(input, "record.deleted", existing.version, existing.data);
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const existing = this.getRecord(input.moduleId, input.collectionId, input.recordId);
+      if (!existing) throw new RecordStoreError("RecordNotFound", `Record ${input.recordId} does not exist in ${input.collectionId}.`);
+      const result = this.#database.prepare(`
+        DELETE FROM module_records WHERE module_id = ? AND collection_id = ? AND record_id = ? AND record_version = ?
+      `).run(input.moduleId, input.collectionId, input.recordId, input.expectedVersion);
+      if (result.changes !== 1) throw new RecordStoreError("VersionConflict", `Record ${input.recordId} changed before it could be removed.`);
+      this.#recordEvent(input, "record.deleted", existing.version, existing.data);
+      this.#database.exec("COMMIT;");
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   #recordEvent(input: { moduleId: string; collectionId: string; recordId: string; now: string }, eventType: string, version: number, payload: unknown): void {
@@ -412,6 +488,64 @@ export class WorkspaceStore {
     }));
   }
 
+  listProposals(): readonly StoredProposal[] {
+    const rows = this.#database.prepare(`
+      SELECT proposal_id, change_set_hash, base_revision, status, change_set_json, created_at
+      FROM proposals ORDER BY created_at ASC, proposal_id ASC
+    `).all() as {
+      proposal_id: string; change_set_hash: string; base_revision: number;
+      status: ProposalStatus; change_set_json: string; created_at: string;
+    }[];
+    return rows.map((row) => ({
+      proposalId: row.proposal_id,
+      changeSetHash: row.change_set_hash,
+      baseRevision: row.base_revision,
+      status: row.status,
+      changeSet: JSON.parse(row.change_set_json) as unknown,
+      createdAt: row.created_at
+    }));
+  }
+
+  listApprovals(): readonly StoredApproval[] {
+    const rows = this.#database.prepare(`
+      SELECT approval_id, proposal_id, change_set_hash, principal_id, approved_at
+      FROM approval_records ORDER BY approved_at ASC, approval_id ASC
+    `).all() as {
+      approval_id: string; proposal_id: string; change_set_hash: string;
+      principal_id: string; approved_at: string;
+    }[];
+    return rows.map((row) => ({
+      approvalId: row.approval_id,
+      proposalId: row.proposal_id,
+      changeSetHash: row.change_set_hash,
+      principalId: row.principal_id,
+      approvedAt: row.approved_at
+    }));
+  }
+
+  inspectRecordHealth(): RecordHealth {
+    const integrity = this.#database.prepare("PRAGMA quick_check").all() as { quick_check: string }[];
+    if (integrity.some((row) => row.quick_check !== "ok")) {
+      throw new Error("The workspace database failed its integrity check.");
+    }
+    const collections = this.#database.prepare(`
+      SELECT module_id, collection_id, COUNT(*) AS record_count
+      FROM module_records GROUP BY module_id, collection_id
+      ORDER BY module_id ASC, collection_id ASC
+    `).all() as { module_id: string; collection_id: string; record_count: number }[];
+    const eventRow = this.#database.prepare("SELECT COUNT(*) AS count FROM record_events").get() as { count: number };
+    return {
+      status: "ok",
+      totalRecords: collections.reduce((sum, row) => sum + row.record_count, 0),
+      totalEvents: eventRow.count,
+      collections: collections.map((row) => ({
+        moduleId: row.module_id,
+        collectionId: row.collection_id,
+        recordCount: row.record_count
+      }))
+    };
+  }
+
   eventLogPosition(): number {
     const row = this.#database.prepare("SELECT COALESCE(MAX(sequence), 0) AS position FROM event_log").get() as { position: number };
     return row.position;
@@ -424,6 +558,7 @@ export class WorkspaceStore {
     principalId: string;
     approvedAt: string;
     transformManifest: (current: WorkspaceManifest, changeSet: unknown) => WorkspaceManifest;
+    transformRecords?: (snapshot: WorkspaceRecordSnapshot, changeSet: unknown) => WorkspaceRecordSnapshot | undefined;
   }): WorkspaceManifest {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -450,6 +585,8 @@ export class WorkspaceStore {
       const nextManifest = input.transformManifest(current.manifest, proposal.changeSet);
       const nextRevision = current.revision + 1;
       const committedManifest = { ...nextManifest, revision: nextRevision };
+      const replacement = input.transformRecords?.(this.snapshotRecords(), proposal.changeSet);
+      if (replacement) this.#replaceRecords(replacement, input.approvedAt, nextRevision);
 
       this.#database.prepare(`
         UPDATE workspace_metadata SET revision = ?, manifest_json = ? WHERE singleton_id = 1 AND revision = ?
@@ -472,6 +609,36 @@ export class WorkspaceStore {
     } catch (error) {
       this.#database.exec("ROLLBACK;");
       throw error;
+    }
+  }
+
+  #replaceRecords(snapshot: WorkspaceRecordSnapshot, occurredAt: string, workspaceRevision: number): void {
+    if (snapshot.schemaVersion !== 1 || !Array.isArray(snapshot.records) || !Array.isArray(snapshot.events)) {
+      throw new RecordStoreError("ValidationFailed", "The snapshot record payload is invalid.");
+    }
+    const keys = new Set<string>();
+    for (const record of snapshot.records) {
+      assertRecordId(record.recordId);
+      if (!record.moduleId || !record.collectionId || !Number.isSafeInteger(record.version) || record.version < 1 ||
+          !record.createdAt || !record.updatedAt || !record.data || typeof record.data !== "object" || Array.isArray(record.data)) {
+        throw new RecordStoreError("ValidationFailed", "A captured module record is invalid.");
+      }
+      const key = `${record.moduleId}\0${record.collectionId}\0${record.recordId}`;
+      if (keys.has(key)) throw new RecordStoreError("ValidationFailed", `Duplicate captured record: ${record.recordId}.`);
+      keys.add(key);
+    }
+    this.#database.prepare("DELETE FROM module_records").run();
+    const insert = this.#database.prepare(`
+      INSERT INTO module_records (module_id, collection_id, record_id, record_version, created_at, updated_at, data_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const record of snapshot.records) {
+      insert.run(record.moduleId, record.collectionId, record.recordId, record.version, record.createdAt, record.updatedAt, JSON.stringify(record.data));
+      this.#database.prepare(`
+        INSERT INTO record_events (occurred_at, module_id, collection_id, record_id, event_type, record_version, payload_json)
+        VALUES (?, ?, ?, ?, 'record.restored', ?, ?)
+      `).run(occurredAt, record.moduleId, record.collectionId, record.recordId, record.version,
+        JSON.stringify({ snapshotVersion: record.version, workspaceRevision }));
     }
   }
 

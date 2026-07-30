@@ -86,6 +86,16 @@ export interface ChangeSet {
   operations: ChangeOperation[];
 }
 
+export interface ModelProvenance {
+  modelId: string;
+  promptDigest: Sha256Digest;
+  provider?: string;
+  tokenUsage?: {
+    prompt: number;
+    completion: number;
+  };
+}
+
 /** A durable proposal binds one exact ChangeSet to the revision it was based on. */
 export interface ProposalRecord {
   schemaVersion: typeof SCHEMA_VERSION;
@@ -96,6 +106,7 @@ export interface ProposalRecord {
   changeSetDigest: Sha256Digest;
   status: "pending" | "approved" | "rejected" | "applied" | "stale";
   createdAt: string;
+  modelProvenance?: ModelProvenance;
 }
 
 /** An approval is intentionally bound to the proposal identity, revision, and bytes. */
@@ -108,6 +119,7 @@ export interface ApprovalRecord {
   changeSetDigest: Sha256Digest;
   approvedAt: string;
   approvedBy?: string;
+  modelProvenance?: ModelProvenance;
 }
 
 export const CHANGESET_APPROVAL_ERROR_CODES = [

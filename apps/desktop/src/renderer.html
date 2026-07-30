@@ -1,33 +1,291 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
-    <title>AI-Mo-To</title>
-    <style>
-      :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-      body { margin: 0; background: #111827; color: #f9fafb; }
-      main { max-width: 880px; margin: auto; padding: 48px 28px; }
-      h1 { margin: 0 0 8px; font-size: 2.1rem; } p { color: #cbd5e1; line-height: 1.5; }
-      button { border: 0; border-radius: 8px; background: #38bdf8; color: #082f49; cursor: pointer; font: inherit; font-weight: 700; padding: 11px 16px; }
-      button:hover { background: #7dd3fc; } .status { min-height: 24px; color: #bae6fd; }
-      .workspace { border-left: 3px solid #38bdf8; margin: 24px 0; padding-left: 16px; }
-      .views { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
-      article { border: 1px solid #334155; border-radius: 12px; background: #172033; padding: 20px; }
-      article h2 { margin-top: 0; } .empty { color: #94a3b8; font-style: italic; }
-      .error { color: #fecaca; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>AI-Mo-To</h1>
-      <p>Your local workspace opens automatically. You can also open another workspace.</p>
-      <button id="open-workspace" type="button">Open another workspace</button>
-      <p id="status" class="status" role="status"></p>
-      <section id="workspace" class="workspace" hidden></section>
-      <section id="views" class="views" aria-label="Workspace views"></section>
-    </main>
-    <script type="module" src="./renderer.js"></script>
-  </body>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>AI-Mo-To Workspace</title>
+  <link rel="stylesheet" href="../../packages/ui-primitives/src/tokens.css" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--aimoto-bg);
+      color: var(--aimoto-text);
+      font-family: inherit;
+      overflow: hidden;
+    }
+    button, input { font: inherit; color: inherit; }
+    
+    .shell {
+      display: grid;
+      grid-template-columns: 240px minmax(400px, 1fr) minmax(300px, 35%);
+      height: 100vh;
+    }
+
+    .sidebar {
+      background: var(--aimoto-panel);
+      border-right: 1px solid var(--aimoto-line);
+      display: flex;
+      flex-direction: column;
+      padding: var(--aimoto-space-sm);
+    }
+
+    .workspace-switcher {
+      align-items: center;
+      background: transparent;
+      border: 1px solid var(--aimoto-line);
+      border-radius: var(--aimoto-radius-md);
+      cursor: pointer;
+      display: flex;
+      gap: var(--aimoto-space-xs);
+      padding: var(--aimoto-space-xs) var(--aimoto-space-sm);
+      text-align: left;
+      width: 100%;
+      transition: background 0.15s ease;
+    }
+    .workspace-switcher:hover { background: var(--aimoto-raised-hover); }
+
+    .mark {
+      align-items: center;
+      background: linear-gradient(145deg, var(--aimoto-accent), #30a971);
+      border-radius: var(--aimoto-radius-sm);
+      color: #062016;
+      display: flex;
+      font-weight: 900;
+      height: 28px;
+      justify-content: center;
+      width: 28px;
+    }
+
+    .workspace-copy { flex: 1; min-width: 0; }
+    .workspace-copy strong { display: block; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .workspace-copy span { color: var(--aimoto-muted); font-size: 0.75rem; display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .nav-label {
+      color: var(--aimoto-subtle);
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      margin: var(--aimoto-space-lg) var(--aimoto-space-xs) var(--aimoto-space-xs);
+      text-transform: uppercase;
+    }
+
+    .module-nav { display: flex; flex-direction: column; gap: var(--aimoto-space-2xs); }
+
+    .module-button {
+      align-items: center;
+      background: transparent;
+      border: 0;
+      border-radius: var(--aimoto-radius-sm);
+      cursor: pointer;
+      display: flex;
+      gap: var(--aimoto-space-xs);
+      padding: 10px var(--aimoto-space-sm);
+      text-align: left;
+      width: 100%;
+      transition: background 0.15s ease;
+    }
+    .module-button:hover { background: var(--aimoto-raised-hover); }
+    .module-button.active { background: var(--aimoto-raised); color: var(--aimoto-text); font-weight: 600; }
+    .module-button icon { width: 18px; color: var(--aimoto-muted); }
+
+    .sidebar-foot {
+      border-top: 1px solid var(--aimoto-line);
+      margin-top: auto;
+      padding: var(--aimoto-space-sm) var(--aimoto-space-xs) 0;
+    }
+
+    .authority-badge {
+      align-items: center;
+      display: inline-flex;
+      font-size: 0.78rem;
+      gap: var(--aimoto-space-xs);
+      padding: var(--aimoto-space-2xs) var(--aimoto-space-xs);
+      border-radius: 999px;
+      background: var(--aimoto-accent-soft);
+      color: var(--aimoto-accent-text);
+      border: 1px solid var(--aimoto-accent-border);
+    }
+    .authority-dot {
+      background: var(--aimoto-accent);
+      border-radius: 50%;
+      height: 7px;
+      width: 7px;
+    }
+
+    .center { display: flex; flex-direction: column; min-width: 0; background: var(--aimoto-bg); }
+
+    .topbar {
+      align-items: center;
+      border-bottom: 1px solid var(--aimoto-line);
+      display: flex;
+      height: 58px;
+      padding: 0 var(--aimoto-space-lg);
+    }
+    .view-title { font-size: 0.95rem; font-weight: 700; }
+
+    .top-actions { display: flex; gap: var(--aimoto-space-xs); margin-left: auto; }
+    .icon-button {
+      background: transparent;
+      border: 1px solid var(--aimoto-line);
+      border-radius: var(--aimoto-radius-sm);
+      cursor: pointer;
+      padding: var(--aimoto-space-xs) var(--aimoto-space-sm);
+    }
+    .icon-button:hover { background: var(--aimoto-raised); }
+
+    .content { flex: 1; overflow: auto; padding: var(--aimoto-space-lg) var(--aimoto-space-xl); }
+    .content-head { margin-bottom: var(--aimoto-space-lg); }
+    .content-head h1 { font-size: 1.6rem; margin: 0; letter-spacing: -0.02em; }
+    .content-head p { color: var(--aimoto-muted); font-size: 0.85rem; margin: var(--aimoto-space-2xs) 0 0; }
+
+    .views-grid {
+      display: grid;
+      gap: var(--aimoto-space-md);
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+
+    .view-card {
+      background: var(--aimoto-raised);
+      border: 1px solid var(--aimoto-line);
+      border-radius: var(--aimoto-radius-md);
+      overflow: hidden;
+      box-shadow: var(--aimoto-shadow-sm);
+    }
+    .view-card h2 { font-size: 0.95rem; margin: 0; padding: var(--aimoto-space-md) var(--aimoto-space-md) 0; }
+    .view-card p { color: var(--aimoto-muted); font-size: 0.8rem; margin: var(--aimoto-space-xs) var(--aimoto-space-md) var(--aimoto-space-md); }
+
+    .terminal {
+      background: var(--aimoto-panel);
+      border-left: 1px solid var(--aimoto-line);
+      display: flex;
+      flex-direction: column;
+    }
+    .terminal-tabs {
+      align-items: center;
+      border-bottom: 1px solid var(--aimoto-line);
+      display: flex;
+      height: 58px;
+      padding: 0 var(--aimoto-space-sm);
+    }
+    .terminal-tab {
+      align-items: center;
+      background: var(--aimoto-raised);
+      border: 1px solid var(--aimoto-line);
+      border-radius: var(--aimoto-radius-sm);
+      display: flex;
+      font-size: 0.78rem;
+      gap: var(--aimoto-space-xs);
+      padding: var(--aimoto-space-xs) var(--aimoto-space-sm);
+    }
+    .terminal-body {
+      color: var(--aimoto-text);
+      flex: 1;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      overflow: auto;
+      padding: var(--aimoto-space-md);
+    }
+    .terminal-muted { color: var(--aimoto-muted); }
+    .terminal-accent { color: var(--aimoto-accent); }
+
+    .terminal-form {
+      align-items: center;
+      border-top: 1px solid var(--aimoto-line);
+      display: flex;
+      gap: var(--aimoto-space-xs);
+      padding: var(--aimoto-space-sm) var(--aimoto-space-md);
+    }
+    .terminal-input {
+      background: transparent;
+      border: 0;
+      color: var(--aimoto-text);
+      flex: 1;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      outline: 0;
+    }
+
+    @media (max-width: 1050px) {
+      .shell { grid-template-columns: 220px 1fr; }
+      .terminal { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <!-- Sidebar Navigation Landmark -->
+    <aside class="sidebar" aria-label="Workspace Navigation">
+      <button id="open-workspace" class="workspace-switcher" type="button" aria-label="Switch current workspace">
+        <span class="mark" aria-hidden="true">A</span>
+        <span class="workspace-copy">
+          <strong id="workspace-name">AI-Mo-To</strong>
+          <span id="workspace-path">Choose a workspace</span>
+        </span>
+        <span aria-hidden="true">⌄</span>
+      </button>
+
+      <div class="nav-label">Modules</div>
+      <nav id="module-nav" class="module-nav" aria-label="Workspace modules">
+        <button class="module-button active" data-filter="all" type="button">
+          <span aria-hidden="true">⌂</span><span>Overview</span>
+        </button>
+        <button class="module-button" data-filter="files" type="button">
+          <span aria-hidden="true">□</span><span>Files</span>
+        </button>
+        <button class="module-button" data-filter="tasks" type="button">
+          <span aria-hidden="true">✓</span><span>Tasks</span>
+        </button>
+        <button class="module-button" data-filter="habits" type="button">
+          <span aria-hidden="true">◉</span><span>Habits</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="authority-badge">
+          <span class="authority-dot" aria-hidden="true"></span>
+          <span id="authority-label">Local workspace</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Center Landmark -->
+    <section class="center" aria-label="Main View">
+      <header class="topbar">
+        <span id="view-title" class="view-title">Overview</span>
+        <div class="top-actions">
+          <button class="icon-button" id="refresh" type="button" title="Refresh workspace state" aria-label="Refresh workspace">↻</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <div class="content-head">
+          <h1 id="page-heading">Workspace</h1>
+          <p id="status" role="status" aria-live="polite">Opening local workspace…</p>
+        </div>
+        <section id="views" class="views-grid" aria-label="Workspace views"></section>
+      </main>
+    </section>
+
+    <!-- Console Terminal Landmark -->
+    <aside class="terminal" aria-label="Workspace Terminal Console">
+      <header class="terminal-tabs">
+        <div class="terminal-tab">
+          <span class="authority-dot" aria-hidden="true"></span>
+          <span>Workspace Console</span>
+        </div>
+      </header>
+      <div id="terminal-output" class="terminal-body" role="log" aria-live="polite">
+        <p class="terminal-accent">AI-Mo-To Console Initialized</p>
+        <p class="terminal-muted">Type 'help' for local commands.</p>
+      </div>
+      <form id="terminal-form" class="terminal-form">
+        <span class="terminal-accent" aria-hidden="true">›</span>
+        <input id="terminal-input" class="terminal-input" autocomplete="off" spellcheck="false" aria-label="Terminal command input" placeholder="status" />
+      </form>
+    </aside>
+  </div>
+  <script type="module" src="./renderer.js"></script>
+</body>
 </html>

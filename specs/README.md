@@ -10,3 +10,4 @@ Each slice follows the same agent-driven workflow: establish its behavior in
 - [004 - Foundry staging](004-foundry-staging/spec.md)
 - [005 - ChangeSet approval](005-changeset-approval/spec.md)
 - [006 - Foundry module installation](006-foundry-install/spec.md)
+- [013 - Outcome-first external-agent acceptance](013-outcome-first-agent-acceptance/spec.md)

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "need": "I need a simple place to track a daily habit. Set it up for me.",
+  "approval": "I approve the exact proposal you showed me. Continue.",
+  "agentExecutable": "codex",
+  "agentArguments": [
+    "exec",
+    "--json",
+    "--skip-git-repo-check"
+  ]
+}

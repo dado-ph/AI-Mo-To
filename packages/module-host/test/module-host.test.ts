@@ -5,7 +5,13 @@ import { ModuleHost } from "../src/index.js";
 const hosts: ModuleHost[] = [];
 const entrypoint = fileURLToPath(new URL("./fixtures/handler.mjs", import.meta.url));
 
-function host(options: { timeoutMs?: number; maximumDiagnosticBytes?: number } = {}) {
+function host(
+  options: {
+    startupTimeoutMs?: number;
+    timeoutMs?: number;
+    maximumDiagnosticBytes?: number;
+  } = {}
+) {
   const instance = new ModuleHost({
     moduleId: "test.handler",
     entrypoint,
@@ -27,9 +33,7 @@ describe("ModuleHost", () => {
   });
 
   it("isolates timeouts and crashes", async () => {
-    // Process startup competes with the monorepo's parallel test workers on CI.
-    // Keep the timeout behavior under test while giving initialization room to start.
-    const timeout = host({ timeoutMs: 1_000 });
+    const timeout = host({ timeoutMs: 100 });
     await timeout.start();
     await expect(
       timeout.invoke({ context_ref: "opaque:2", command: "hang", input: null })

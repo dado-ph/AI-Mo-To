@@ -13,6 +13,25 @@
     "changeSet": { "$ref": "https://ai-mo-to.dev/schemas/v1/change-set.schema.json" },
     "changeSetDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
     "status": { "enum": ["pending", "approved", "rejected", "applied", "stale"] },
-    "createdAt": { "type": "string", "format": "date-time" }
+    "createdAt": { "type": "string", "format": "date-time" },
+    "modelProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelId", "promptDigest"],
+      "properties": {
+        "modelId": { "type": "string", "minLength": 1 },
+        "promptDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "provider": { "type": "string" },
+        "tokenUsage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["prompt", "completion"],
+          "properties": {
+            "prompt": { "type": "integer", "minimum": 0 },
+            "completion": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
   }
 }

@@ -17,18 +17,22 @@ import {
 } from "@ai-mo-to/protocol";
 import {
   ProposalCommitError,
+  RecordStoreError,
   WorkspaceStore,
   initializeWorkspaceLayout,
   readWorkspaceManifest,
   workspaceDatabasePath,
   workspaceManifestPath,
-  writeWorkspaceManifest
+  writeWorkspaceManifest,
+  type StoredRecord,
+  type WorkspaceRecordSnapshot
 } from "@ai-mo-to/storage";
 import {
   createSnapshot,
   listSnapshots,
   planRestore,
   readVerifiedWorkspaceManifest,
+  readVerifiedSnapshotData,
   verifySnapshot,
   type CreatedSnapshot,
   type RestorePlan,
@@ -37,6 +41,7 @@ import {
 } from "@ai-mo-to/snapshot";
 
 import { EngineError } from "./errors.js";
+import { AuthorityStateGuard } from "./authority-guard.js";
 
 const AUTHORITY_RANK: Record<AuthorityMode, number> = {
   observe: 0, suggest: 1, assist: 2, execute: 3, build: 4
@@ -96,6 +101,38 @@ export interface WorkspaceInspection {
   capabilities: WorkspaceManifest["capabilities"];
   layout: WorkspaceManifest["layout"];
   health: "ok";
+  evidence: {
+    revisions: readonly {
+      revision: number;
+      createdAt: string;
+      reason: string;
+    }[];
+    proposals: readonly {
+      proposalId: string;
+      baseRevision: number;
+      changeSetDigest: string;
+      status: string;
+      createdAt: string;
+      appliedRevision?: number;
+    }[];
+    approvals: readonly {
+      approvalId: string;
+      proposalId: string;
+      changeSetDigest: string;
+      principalId: string;
+      approvedAt: string;
+    }[];
+    recordHealth: {
+      status: "ok";
+      totalRecords: number;
+      totalEvents: number;
+      collections: readonly {
+        moduleId: string;
+        collectionId: string;
+        recordCount: number;
+      }[];
+    };
+  };
 }
 
 export interface CreateProposalInput {
@@ -115,6 +152,95 @@ export interface CreateSnapshotRestoreProposalInput {
   snapshotId: string;
   proposalId: string;
   now?: () => Date;
+}
+
+export interface ExecuteBuiltInCommandInput {
+  root: string;
+  moduleId: "aimoto.files" | "aimoto.tasks";
+  command: string;
+  input: Record<string, unknown>;
+  now?: () => Date;
+}
+
+type BuiltInRecord = StoredRecord<Record<string, unknown>>;
+export interface InstalledModuleView {
+  moduleId: string;
+  id: string;
+  title: string;
+  kind: "form" | "list" | "table" | "detail" | "timeline";
+  collection: string;
+}
+
+export interface ExecuteHabitTrackerCommandInput {
+  root: string;
+  command: "create-habit" | "log-completion";
+  input: Record<string, unknown>;
+  now?: () => Date;
+}
+
+function requiredString(input: Record<string, unknown>, key: string, maxLength = 10_000): string {
+  const value = input[key];
+  if (typeof value !== "string" || !value.trim() || value.length > maxLength) {
+    throw new EngineError("ValidationFailed", `${key} must be a non-empty string of at most ${maxLength} characters.`);
+  }
+  return value;
+}
+
+function requiredVersion(input: Record<string, unknown>): number {
+  const value = input.expectedVersion;
+  if (!Number.isInteger(value) || (value as number) < 1) {
+    throw new EngineError("ValidationFailed", "expectedVersion must be a positive integer.");
+  }
+  return value as number;
+}
+
+function optionalDateTime(value: unknown, key: string): string | null | undefined {
+  if (value === undefined || value === null) return value;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    throw new EngineError("ValidationFailed", `${key} must be an ISO date-time or null.`);
+  }
+  return value;
+}
+
+function validateTask(data: Record<string, unknown>): void {
+  requiredString(data, "taskId", 160);
+  requiredString(data, "title", 240);
+  if (data.notes !== undefined && (typeof data.notes !== "string" || data.notes.length > 10_000)) {
+    throw new EngineError("ValidationFailed", "notes must be a string of at most 10000 characters.");
+  }
+  if (!["open", "in-progress", "done"].includes(data.status as string)) {
+    throw new EngineError("ValidationFailed", "status must be open, in-progress, or done.");
+  }
+  optionalDateTime(data.dueAt, "dueAt");
+  optionalDateTime(data.createdAt, "createdAt");
+  optionalDateTime(data.updatedAt, "updatedAt");
+  if (!Number.isInteger(data.version) || (data.version as number) < 1) {
+    throw new EngineError("ValidationFailed", "version must be a positive integer.");
+  }
+}
+
+function validateFile(data: Record<string, unknown>): void {
+  requiredString(data, "fileId", 160);
+  requiredString(data, "name");
+  const relativePath = requiredString(data, "relativePath");
+  if (/^(?:\/|[A-Za-z]:)|(?:^|[\\/])\.\.(?:[\\/]|$)/.test(relativePath)) {
+    throw new EngineError("ValidationFailed", "relativePath must remain inside the workspace.");
+  }
+  if (!["file", "folder"].includes(data.kind as string)) {
+    throw new EngineError("ValidationFailed", "kind must be file or folder.");
+  }
+  if (data.size !== undefined && (!Number.isInteger(data.size) || (data.size as number) < 0)) {
+    throw new EngineError("ValidationFailed", "size must be a non-negative integer.");
+  }
+  optionalDateTime(data.updatedAt, "updatedAt");
+}
+
+function mapRecordError(error: unknown): never {
+  if (error instanceof EngineError) throw error;
+  if (error instanceof RecordStoreError) {
+    throw new EngineError(error.code, error.message);
+  }
+  throw error;
 }
 
 async function bundleFiles(directory: string, relative = ""): Promise<Array<{ path: string; content: Uint8Array }>> {
@@ -295,6 +421,49 @@ async function verifiedRestoreManifests(root: string, changeSet: ChangeSet): Pro
   return resolved;
 }
 
+interface VerifiedRestoreState {
+  manifest: WorkspaceManifest;
+  records: WorkspaceRecordSnapshot;
+}
+
+async function verifiedRestoreStates(root: string, changeSet: ChangeSet): Promise<Map<string, VerifiedRestoreState>> {
+  const manifests = await verifiedRestoreManifests(root, changeSet);
+  const states = new Map<string, VerifiedRestoreState>();
+  for (const operation of changeSet.operations) {
+    if (operation.kind !== "workspace.restore-snapshot") continue;
+    const snapshotId = operation.input.snapshotId;
+    const dataDigest = operation.input.dataDigest;
+    if (typeof snapshotId !== "string" || typeof dataDigest !== "string") {
+      throw new EngineError("ValidationFailed", "A restore operation must bind the captured record data digest.");
+    }
+    const verified = await readVerifiedSnapshotData(join(root, ".aimoto", "snapshots"), snapshotId);
+    if (verified.dataDigest !== dataDigest) {
+      throw new EngineError("ValidationFailed", "The snapshot no longer contains the record data bound to this restore proposal.");
+    }
+    const manifest = manifests.get(operation.operationId)!;
+    const records = verified.data as WorkspaceRecordSnapshot;
+    if (records?.schemaVersion !== 1 || !Array.isArray(records.records) || !Array.isArray(records.events)) {
+      throw new EngineError("ValidationFailed", "The snapshot contains an invalid record collection payload.");
+    }
+    const pins = new Map(manifest.modules.map((module) => [module.moduleId, module.version]));
+    const snapshotModules = new Map(verified.snapshot.modules.map((module) => [module.moduleId, module.version]));
+    for (const module of verified.snapshot.modules) {
+      const schemaBytes = await readFile(join(root, ".aimoto", "snapshots", "objects", module.schema.digest));
+      const declaration = JSON.parse(schemaBytes.toString("utf8")) as { moduleId?: unknown; version?: unknown };
+      if (declaration.moduleId !== module.moduleId || declaration.version !== module.version) {
+        throw new EngineError("ValidationFailed", `Snapshot module declaration is inconsistent for ${module.moduleId}.`);
+      }
+    }
+    if (pins.size !== snapshotModules.size ||
+        [...pins].some(([moduleId, version]) => snapshotModules.get(moduleId) !== version) ||
+        records.records.some((record) => pins.get(record.moduleId) === undefined)) {
+      throw new EngineError("ValidationFailed", "Snapshot records, module bundles, and the captured workspace manifest are inconsistent.");
+    }
+    states.set(operation.operationId, { manifest, records });
+  }
+  return states;
+}
+
 async function prepareModuleBundles(root: string, changeSet: ChangeSet): Promise<void> {
   for (const operation of changeSet.operations) {
     if (operation.kind !== "module.install") continue;
@@ -383,6 +552,213 @@ export class WorkspaceEngine {
     }
   }
 
+  /**
+   * Executes the core Files and Tasks contracts through engine-owned storage.
+   * The engine derives timestamps, lifecycle fields, and record versions so a
+   * module cannot forge concurrency metadata.
+   */
+  async executeBuiltInCommand(input: ExecuteBuiltInCommandInput): Promise<BuiltInRecord | { removed: true; recordId: string }> {
+    const root = resolve(input.root);
+    const workspace = await this.inspectWorkspace(root);
+    AuthorityStateGuard.assertCanMutateState(workspace.authorityMode, "executeBuiltInCommand");
+    if (!workspace.modules.some((module) => module.moduleId === input.moduleId)) {
+      throw new EngineError("ModuleNotInstalled", `Module ${input.moduleId} is not installed in this workspace.`);
+    }
+    const now = (input.now ?? (() => new Date()))().toISOString();
+    const store = new WorkspaceStore(workspaceDatabasePath(root));
+    try {
+      store.initialize();
+      if (input.moduleId === "aimoto.files") {
+        if (input.command === "register") {
+          const recordId = requiredString(input.input, "fileId", 160);
+          const data: Record<string, unknown> = {
+            fileId: recordId,
+            name: requiredString(input.input, "name"),
+            relativePath: requiredString(input.input, "relativePath"),
+            kind: input.input.kind,
+            ...(input.input.size === undefined ? {} : { size: input.input.size }),
+            updatedAt: now
+          };
+          return store.createRecord({
+            moduleId: input.moduleId, collectionId: "file", recordId, data, now, validate: validateFile
+          });
+        }
+        if (input.command === "remove") {
+          const recordId = requiredString(input.input, "fileId", 160);
+          store.deleteRecord({
+            moduleId: input.moduleId, collectionId: "file", recordId,
+            expectedVersion: requiredVersion(input.input), now
+          });
+          return { removed: true, recordId };
+        }
+      }
+
+      if (input.moduleId === "aimoto.tasks") {
+        if (input.command === "create") {
+          const recordId = requiredString(input.input, "taskId", 160);
+          const data: Record<string, unknown> = {
+            taskId: recordId,
+            title: requiredString(input.input, "title", 240),
+            ...(input.input.notes === undefined ? {} : { notes: input.input.notes }),
+            status: "open",
+            dueAt: optionalDateTime(input.input.dueAt, "dueAt") ?? null,
+            createdAt: now,
+            updatedAt: now,
+            version: 1
+          };
+          return store.createRecord({
+            moduleId: input.moduleId, collectionId: "task", recordId, data, now, validate: validateTask
+          });
+        }
+
+        if (["update", "complete", "reopen"].includes(input.command)) {
+          const recordId = requiredString(input.input, "taskId", 160);
+          const expectedVersion = requiredVersion(input.input);
+          const existing = store.getRecord<Record<string, unknown>>(input.moduleId, "task", recordId);
+          if (!existing) throw new EngineError("RecordNotFound", `Record ${recordId} does not exist in task.`);
+          const data = { ...existing.data };
+          if (input.command === "update") {
+            if (input.input.title !== undefined) data.title = requiredString(input.input, "title", 240);
+            if (input.input.notes !== undefined) data.notes = input.input.notes;
+            if (Object.hasOwn(input.input, "dueAt")) data.dueAt = optionalDateTime(input.input.dueAt, "dueAt") ?? null;
+            if (input.input.status !== undefined) data.status = input.input.status;
+          } else {
+            data.status = input.command === "complete" ? "done" : "open";
+          }
+          data.updatedAt = now;
+          data.version = expectedVersion + 1;
+          return store.updateRecord({
+            moduleId: input.moduleId, collectionId: "task", recordId, expectedVersion, data, now, validate: validateTask
+          });
+        }
+      }
+      throw new EngineError("CommandNotFound", `Command ${input.command} is not declared by ${input.moduleId}.`);
+    } catch (error) {
+      mapRecordError(error);
+    } finally {
+      store.close();
+    }
+  }
+
+  async getBuiltInRecord(rootInput: string, moduleId: "aimoto.files" | "aimoto.tasks", recordId: string): Promise<BuiltInRecord> {
+    const root = resolve(rootInput);
+    const workspace = await this.inspectWorkspace(root);
+    if (!workspace.modules.some((module) => module.moduleId === moduleId)) {
+      throw new EngineError("ModuleNotInstalled", `Module ${moduleId} is not installed in this workspace.`);
+    }
+    const collectionId = moduleId === "aimoto.files" ? "file" : "task";
+    const store = new WorkspaceStore(workspaceDatabasePath(root));
+    try {
+      store.initialize();
+      const record = store.getRecord(moduleId, collectionId, recordId);
+      if (!record) throw new EngineError("RecordNotFound", `Record ${recordId} does not exist in ${collectionId}.`);
+      return record;
+    } finally {
+      store.close();
+    }
+  }
+
+  async listBuiltInRecords(rootInput: string, moduleId: "aimoto.files" | "aimoto.tasks"): Promise<readonly BuiltInRecord[]> {
+    const root = resolve(rootInput);
+    const workspace = await this.inspectWorkspace(root);
+    if (!workspace.modules.some((module) => module.moduleId === moduleId)) {
+      throw new EngineError("ModuleNotInstalled", `Module ${moduleId} is not installed in this workspace.`);
+    }
+    const collectionId = moduleId === "aimoto.files" ? "file" : "task";
+    const store = new WorkspaceStore(workspaceDatabasePath(root));
+    try {
+      store.initialize();
+      return store.listRecords(moduleId, collectionId);
+    } finally {
+      store.close();
+    }
+  }
+
+  /** Reads inert, validated view declarations from an installed module bundle. Generated code is never loaded. */
+  async listInstalledModuleViews(rootInput: string, moduleId: string): Promise<readonly InstalledModuleView[]> {
+    const root = resolve(rootInput);
+    const workspace = await this.inspectWorkspace(root);
+    const pin = workspace.modules.find((module) => module.moduleId === moduleId);
+    if (!pin) throw new EngineError("ModuleNotInstalled", `Module ${moduleId} is not installed in this workspace.`);
+    const directory = moduleBundleDirectory(root, pin);
+    const manifest = JSON.parse(await readFile(join(directory, "module.json"), "utf8")) as {
+      moduleId?: unknown;
+      views?: Array<{ id?: unknown; kind?: unknown; declaration?: unknown }>;
+    };
+    const validation = validateProtocol("module-manifest", manifest);
+    if (!validation.valid || manifest.moduleId !== moduleId) {
+      throw new EngineError("ValidationFailed", `Module ${moduleId} has an invalid manifest.`);
+    }
+    return Promise.all((manifest.views ?? []).map(async (view) => {
+      if (typeof view.id !== "string" || typeof view.kind !== "string" || typeof view.declaration !== "string") {
+        throw new EngineError("ValidationFailed", `Module ${moduleId} has an incomplete view declaration.`);
+      }
+      const declarationPath = resolve(directory, view.declaration);
+      if (declarationPath !== directory && !declarationPath.startsWith(`${directory}\\`) && !declarationPath.startsWith(`${directory}/`)) {
+        throw new EngineError("ValidationFailed", "A module view declaration escaped its installed bundle.");
+      }
+      const declaration = JSON.parse(await readFile(declarationPath, "utf8")) as { title?: unknown; kind?: unknown; collection?: unknown };
+      if (typeof declaration.title !== "string" || typeof declaration.collection !== "string" || declaration.kind !== view.kind) {
+        throw new EngineError("ValidationFailed", `Module ${moduleId} view ${view.id} is invalid.`);
+      }
+      return {
+        moduleId,
+        id: view.id,
+        title: declaration.title,
+        kind: view.kind as InstalledModuleView["kind"],
+        collection: declaration.collection
+      };
+    }));
+  }
+
+  async listHabitTrackerRecords(rootInput: string, collectionId: "habit" | "habit-entry"): Promise<readonly BuiltInRecord[]> {
+    const root = resolve(rootInput);
+    const workspace = await this.inspectWorkspace(root);
+    if (!workspace.modules.some((module) => module.moduleId === "local.habit-tracker")) {
+      throw new EngineError("ModuleNotInstalled", "Habit Tracker is not installed in this workspace.");
+    }
+    const store = new WorkspaceStore(workspaceDatabasePath(root));
+    try {
+      store.initialize();
+      return store.listRecords("local.habit-tracker", collectionId);
+    } finally { store.close(); }
+  }
+
+  /** Executes the generated proof module through engine-owned storage, never its generated handler file. */
+  async executeHabitTrackerCommand(input: ExecuteHabitTrackerCommandInput): Promise<BuiltInRecord> {
+    const root = resolve(input.root);
+    const workspace = await this.inspectWorkspace(root);
+    AuthorityStateGuard.assertCanMutateState(workspace.authorityMode, "executeHabitTrackerCommand");
+    if (!workspace.modules.some((module) => module.moduleId === "local.habit-tracker")) {
+      throw new EngineError("ModuleNotInstalled", "Habit Tracker is not installed in this workspace.");
+    }
+    const now = (input.now ?? (() => new Date()))().toISOString();
+    const store = new WorkspaceStore(workspaceDatabasePath(root));
+    try {
+      store.initialize();
+      if (input.command === "create-habit") {
+        const recordId = requiredString(input.input, "habitId", 160);
+        const data = { habitId: recordId, name: requiredString(input.input, "name", 240) };
+        return store.createRecord({ moduleId: "local.habit-tracker", collectionId: "habit", recordId, data, now });
+      }
+      const recordId = requiredString(input.input, "entryId", 160);
+      const habitId = requiredString(input.input, "habitId", 160);
+      if (!store.getRecord("local.habit-tracker", "habit", habitId)) {
+        throw new EngineError("RecordNotFound", `Habit ${habitId} does not exist.`);
+      }
+      const completedOn = requiredString(input.input, "completedOn", 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(completedOn) || Number.isNaN(Date.parse(`${completedOn}T00:00:00Z`))) {
+        throw new EngineError("ValidationFailed", "completedOn must be an ISO calendar date.");
+      }
+      return store.createRecord({
+        moduleId: "local.habit-tracker", collectionId: "habit-entry", recordId,
+        data: { entryId: recordId, habitId, completedOn }, now
+      });
+    } catch (error) {
+      mapRecordError(error);
+    } finally { store.close(); }
+  }
+
   async createSnapshot(rootInput: string): Promise<CreatedSnapshot> {
     const root = resolve(rootInput);
     const inspection = await this.inspectWorkspace(root);
@@ -401,7 +777,7 @@ export class WorkspaceEngine {
         workspaceManifest: await readWorkspaceManifest(root),
         revisions,
         modules,
-        data: {},
+        data: store.snapshotRecords(),
         context: await readContext(root),
         eventLogPosition,
         engineConfigurationRefs: []
@@ -448,6 +824,7 @@ export class WorkspaceEngine {
           snapshotId: input.snapshotId,
           workspaceManifestDigest: restore.manifest.workspaceManifest.digest,
           sourceRevision: restore.sourceRevision,
+          dataDigest: restore.manifest.data.digest,
         },
         preconditions: [
           { kind: "workspace.revision", value: workspace.revision },
@@ -574,7 +951,30 @@ export class WorkspaceEngine {
         authorityMode: fileManifest.authorityMode,
         capabilities: fileManifest.capabilities,
         layout: fileManifest.layout,
-        health: "ok"
+        health: "ok",
+        evidence: {
+          revisions: store.listRevisions().map(({ revision, createdAt, reason }) => ({
+            revision, createdAt, reason
+          })),
+          proposals: store.listProposals().map((proposal) => ({
+            proposalId: proposal.proposalId,
+            baseRevision: proposal.baseRevision,
+            changeSetDigest: proposal.changeSetHash,
+            status: proposal.status,
+            createdAt: proposal.createdAt,
+            ...(proposal.status === "committed"
+              ? { appliedRevision: proposal.baseRevision + 1 }
+              : {})
+          })),
+          approvals: store.listApprovals().map((approval) => ({
+            approvalId: approval.approvalId,
+            proposalId: approval.proposalId,
+            changeSetDigest: approval.changeSetHash,
+            principalId: approval.principalId,
+            approvedAt: approval.approvedAt
+          })),
+          recordHealth: store.inspectRecordHealth()
+        }
       };
     } finally {
       store.close();
@@ -626,7 +1026,13 @@ export class WorkspaceEngine {
 
   async approveProposal(input: ApproveProposalInput): Promise<WorkspaceInspection> {
     const root = resolve(input.root);
+    const inspection = await this.inspectWorkspace(root);
+    AuthorityStateGuard.assertCanApplyProposal(inspection.authorityMode);
     assertApproval(input.approval);
+
+    // Atomic pre-apply snapshot guarantee before making workspace mutations
+    await this.createSnapshot(root);
+
     const store = new WorkspaceStore(workspaceDatabasePath(root));
     try {
       store.initialize();
@@ -643,7 +1049,8 @@ export class WorkspaceEngine {
         throw new EngineError("ValidationFailed", "The approval does not bind the staged workspace revision.");
       }
       await prepareModuleBundles(root, changeSet);
-      const restoreManifests = await verifiedRestoreManifests(root, changeSet);
+      const restoreStates = await verifiedRestoreStates(root, changeSet);
+      const restoreManifests = new Map([...restoreStates].map(([operationId, state]) => [operationId, state.manifest]));
 
       let manifest: WorkspaceManifest;
       try {
@@ -653,7 +1060,14 @@ export class WorkspaceEngine {
           approvalId: input.approval.approvalId,
           principalId: input.approval.approvedBy ?? "local-user",
           approvedAt: input.approval.approvedAt,
-          transformManifest: (current, stagedChangeSet) => applyOperations(current, stagedChangeSet as ChangeSet, restoreManifests)
+          transformManifest: (current, stagedChangeSet) => applyOperations(current, stagedChangeSet as ChangeSet, restoreManifests),
+          transformRecords: (_current, stagedChangeSet) => {
+            for (const operation of (stagedChangeSet as ChangeSet).operations) {
+              const restored = restoreStates.get(operation.operationId);
+              if (restored) return restored.records;
+            }
+            return undefined;
+          }
         });
       } catch (error) {
         if (error instanceof ProposalCommitError) {

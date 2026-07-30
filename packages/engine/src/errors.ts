@@ -12,7 +12,16 @@ export type EngineErrorCode =
   | "AuthorityExceeded"
   | "CapabilityDenied"
   | "ModuleNotInstalled"
+  | "CommandNotFound"
+  | "RecordNotFound"
+  | "RecordExists"
+  | "VersionConflict"
   | "ModuleHostFault"
+  | "ResourceNotFound"
+  | "FilesystemAccessDenied"
+  | "ResourceBusy"
+  | "SchemaInvalid"
+  | "BootstrapFailed"
   | "InternalError";
 
 export class EngineError extends Error {

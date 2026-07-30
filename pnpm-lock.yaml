@@ -32,6 +32,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@ai-mo-to/cli':
+        specifier: workspace:*
+        version: link:../cli
       '@ai-mo-to/engine':
         specifier: workspace:*
         version: link:../../packages/engine

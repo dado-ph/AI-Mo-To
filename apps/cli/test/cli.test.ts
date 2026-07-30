@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { validateProtocol } from "@ai-mo-to/protocol";
+import { EngineError } from "@ai-mo-to/engine";
 
-import { runCli, type CliIo } from "../src/cli.js";
+import { desktopExecutableCandidates, runCli, type CliIo } from "../src/cli.js";
 
 const roots: string[] = [];
 
@@ -39,6 +40,17 @@ afterEach(async () => {
 });
 
 describe("aimoto CLI", () => {
+  it("prefers the packaged host when the installer used a custom directory", () => {
+    expect(desktopExecutableCandidates(
+      { AIMOTO_DESKTOP_PATH: "C:\\override\\AI-Mo-To.exe", LOCALAPPDATA: "C:\\Users\\Ada\\AppData\\Local" },
+      "D:\\Chosen Folder\\AI-Mo-To.exe"
+    )).toEqual([
+      "D:\\Chosen Folder\\AI-Mo-To.exe",
+      "C:\\override\\AI-Mo-To.exe",
+      "C:\\Users\\Ada\\AppData\\Local\\Programs\\AI-Mo-To\\AI-Mo-To.exe"
+    ]);
+  });
+
   it("creates and inspects the same workspace through JSON commands", async () => {
     const cwd = await temporaryDirectory();
     const createdOutput = capture();
@@ -88,7 +100,13 @@ describe("aimoto CLI", () => {
       data: {
         workspaceId: "neighborhood-clean-up",
         revision: 0,
-        health: "ok"
+        health: "ok",
+        evidence: {
+          revisions: [expect.objectContaining({ revision: 0, reason: "workspace.created" })],
+          proposals: [],
+          approvals: [],
+          recordHealth: { status: "ok", totalRecords: 0, totalEvents: 0, collections: [] }
+        }
       }
     });
   });
@@ -113,6 +131,97 @@ describe("aimoto CLI", () => {
         code: "WorkspaceNotFound"
       }
     });
+  });
+
+  it.each([
+    ["EACCES", "FilesystemAccessDenied", "filesystem"],
+    ["EBUSY", "ResourceBusy", "resource"],
+    ["ERR_MODULE_NOT_FOUND", "ResourceNotFound", "resource"],
+    ["SQLITE_CANTOPEN", "BootstrapFailed", "bootstrap"],
+  ])("normalizes %s without exposing exception data", async (nativeCode, publicCode, category) => {
+    const cwd = await temporaryDirectory();
+    await runCli(["init", "Failure Boundary", "--root", "boundary", "--json"], capture().io, { cwd });
+    const output = capture();
+    const sensitivePath = join(cwd, "private", "credential.txt");
+    const failure = Object.assign(new Error(`failed at ${sensitivePath} with token=secret`), {
+      code: nativeCode,
+      path: sensitivePath,
+    });
+
+    expect(await runCli(
+      ["open", "--workspace", "boundary", "--json"],
+      output.io,
+      {
+        cwd,
+        traceId: () => "32d9999f-3703-48cb-8736-f4546697a21c",
+        openDesktop: async () => { throw failure; },
+      }
+    )).toBe(publicCode === "InternalError" ? 1 : 2);
+    const serialized = output.stdout[0] ?? "";
+    expect(JSON.parse(serialized)).toMatchObject({
+      ok: false,
+      command: "open",
+      traceId: "32d9999f-3703-48cb-8736-f4546697a21c",
+      error: {
+        code: publicCode,
+        details: {
+          category,
+          retryable: expect.any(Boolean),
+          remediation: expect.any(String),
+        },
+      },
+    });
+    expect(serialized).not.toContain(sensitivePath);
+    expect(serialized).not.toContain("token=secret");
+  });
+
+  it("normalizes malformed stored data without echoing parser input", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["init", "Schema Boundary", "--root", "schema", "--json"], capture().io, { cwd });
+    const output = capture();
+    const failure = new SyntaxError("Unexpected token in secret workspace content");
+
+    expect(await runCli(
+      ["open", "--workspace", "schema", "--json"],
+      output.io,
+      { cwd, openDesktop: async () => { throw failure; } }
+    )).toBe(2);
+    const serialized = output.stdout[0] ?? "";
+    expect(JSON.parse(serialized)).toMatchObject({
+      error: { code: "SchemaInvalid", details: { category: "schema" } },
+    });
+    expect(serialized).not.toContain("secret workspace content");
+  });
+
+  it("redacts an internal EngineError while preserving its traceId", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["init", "Internal Boundary", "--root", "internal", "--json"], capture().io, { cwd });
+    const output = capture();
+
+    expect(await runCli(
+      ["open", "--workspace", "internal", "--json"],
+      output.io,
+      {
+        cwd,
+        traceId: () => "32d9999f-3703-48cb-8736-f4546697a21c",
+        openDesktop: async () => {
+          throw new EngineError("InternalError", "database password=secret", {
+            path: "C:\\private\\workspace",
+          });
+        },
+      }
+    )).toBe(1);
+    const serialized = output.stdout[0] ?? "";
+    expect(JSON.parse(serialized)).toMatchObject({
+      traceId: "32d9999f-3703-48cb-8736-f4546697a21c",
+      error: {
+        code: "InternalError",
+        message: "The command could not be completed.",
+        details: { category: "internal" },
+      },
+    });
+    expect(serialized).not.toContain("password");
+    expect(serialized).not.toContain("private");
   });
 
   it("stages a visible plan and applies only its exact digest", async () => {
@@ -160,6 +269,139 @@ describe("aimoto CLI", () => {
     const output = capture();
     expect(await runCli(["workspace", "create", "--help"], output.io)).toBe(0);
     expect(output.stdout[0]).toContain("aimoto workspace create");
+  });
+
+  it("publishes versioned machine-readable discovery help", async () => {
+    const output = capture();
+    expect(await runCli(["--help", "--json"], output.io, {
+      traceId: () => "32d9999f-3703-48cb-8736-f4546697a21c"
+    })).toBe(0);
+    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
+      envelopeVersion: expect.any(String),
+      ok: true,
+      command: "help",
+      data: {
+        usage: expect.stringContaining('aimoto request "<ordinary need>"'),
+        approvalRule: expect.stringContaining("exact proposal")
+      }
+    });
+  });
+
+  it("initializes, diagnoses, inspects, and opens a workspace through the agent-facing commands", async () => {
+    const cwd = await temporaryDirectory();
+    const initialized = capture();
+    expect(await runCli(
+      ["init", "Clueless User Workspace", "--root", "clueless", "--json"],
+      initialized.io,
+      { cwd }
+    )).toBe(0);
+    expect(JSON.parse(initialized.stdout[0] ?? "")).toMatchObject({
+      ok: true,
+      command: "init",
+      data: { workspaceId: "clueless-user-workspace", revision: 0 }
+    });
+
+    const doctor = capture();
+    expect(await runCli(
+      ["doctor", "--workspace", "clueless", "--json"],
+      doctor.io,
+      { cwd, platform: "win32", nodeVersion: "22.14.0" }
+    )).toBe(0);
+    expect(JSON.parse(doctor.stdout[0] ?? "")).toMatchObject({
+      ok: true,
+      command: "doctor",
+      data: {
+        healthy: true,
+        checks: [
+          { id: "node", ok: true },
+          { id: "platform", ok: true },
+          {
+            id: "bootstrap",
+            ok: true,
+            evidence: {
+              moduleIds: ["aimoto.files", "aimoto.tasks"],
+              cleanup: "disposable probe directory removed"
+            }
+          },
+          { id: "workspace", ok: true }
+        ]
+      }
+    });
+
+    const openedRoots: string[] = [];
+    const opened = capture();
+    expect(await runCli(
+      ["open", "--workspace", "clueless", "--json"],
+      opened.io,
+      {
+        cwd,
+        openDesktop: async (root) => {
+          openedRoots.push(root);
+          return { launched: true, executable: "AI-Mo-To.exe" };
+        }
+      }
+    )).toBe(0);
+    expect(openedRoots).toEqual([join(cwd, "clueless")]);
+    expect(JSON.parse(opened.stdout[0] ?? "")).toMatchObject({
+      ok: true,
+      command: "open",
+      data: {
+        launched: true,
+        workspace: { workspaceId: "clueless-user-workspace" }
+      }
+    });
+  });
+
+  it("reports an actionable unhealthy result when disposable workspace bootstrap fails", async () => {
+    const output = capture();
+    expect(await runCli(
+      ["doctor", "--json"],
+      output.io,
+      {
+        platform: "win32",
+        nodeVersion: "22.14.0",
+        doctorBootstrapProbe: async () => ({
+          id: "bootstrap",
+          ok: false,
+          detail: "ValidationFailed: built-in Tasks module is missing.",
+          remediation: "Reinstall AI-Mo-To and run aimoto doctor again.",
+          evidence: { missingModuleIds: ["aimoto.tasks"] }
+        })
+      }
+    )).toBe(1);
+
+    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
+      ok: true,
+      command: "doctor",
+      data: {
+        healthy: false,
+        checks: [
+          { id: "node", ok: true },
+          { id: "platform", ok: true },
+          {
+            id: "bootstrap",
+            ok: false,
+            remediation: expect.stringContaining("Reinstall"),
+            evidence: { missingModuleIds: ["aimoto.tasks"] }
+          }
+        ],
+        next: expect.stringContaining("Resolve the failed checks")
+      }
+    });
+  });
+
+  it("keeps unknown commands machine-readable when JSON is requested", async () => {
+    const output = capture();
+    expect(await runCli(["make-magic", "--json"], output.io)).toBe(2);
+    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
+      ok: false,
+      command: "make-magic",
+      error: {
+        code: "InvalidInput",
+        message: expect.stringContaining("aimoto --help")
+      }
+    });
+    expect(output.stderr).toEqual([]);
   });
 
   it("creates and inspects a snapshot, then returns a non-destructive restore plan", async () => {
@@ -227,6 +469,31 @@ describe("aimoto CLI", () => {
     const installed = JSON.parse(applied.stdout[0] ?? "");
     expect(installed).toMatchObject({ data: { revision: 1 } });
     expect(installed.data.modules.some((module: { moduleId: string }) => module.moduleId === "local.habit-tracker")).toBe(true);
+    expect(installed.data.modules).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        moduleId: "local.habit-tracker",
+        version: "0.1.0",
+        digest: proposal.stagedModule.digest
+      })
+    ]));
+    expect(installed.data.evidence).toMatchObject({
+      revisions: [
+        expect.objectContaining({ revision: 0 }),
+        expect.objectContaining({ revision: 1, reason: "proposal.committed" })
+      ],
+      proposals: [expect.objectContaining({
+        proposalId: proposal.proposal.proposalId,
+        changeSetDigest: proposal.proposal.changeSetDigest,
+        status: "committed",
+        appliedRevision: 1
+      })],
+      approvals: [expect.objectContaining({
+        proposalId: proposal.proposal.proposalId,
+        changeSetDigest: proposal.proposal.changeSetDigest,
+        principalId: "local-user"
+      })],
+      recordHealth: { status: "ok", totalRecords: 0 }
+    });
     await access(join(cwd, "habits", ".aimoto", "modules", "local", proposal.stagedModule.digest.slice(7), "module.json"));
   });
 
@@ -238,5 +505,139 @@ describe("aimoto CLI", () => {
     expect(output.stdout[0]).toContain("Habit Tracker is ready for your review.");
     expect(output.stdout[0]).toContain("Exact digest:");
     expect(output.stdout[0]).toContain("Approve it with:");
+  });
+
+  it("discovers installed Habit views and performs explicit record interactions with stable JSON", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["init", "Habit Records", "--root", "habit-records", "--json"], capture().io, { cwd });
+    const planned = capture();
+    await runCli([
+      "request", "Help me track meditation every day", "--workspace", "habit-records", "--json",
+    ], planned.io, { cwd });
+    const proposal = JSON.parse(planned.stdout[0] ?? "").data.proposal;
+    await runCli([
+      "apply", "--workspace", "habit-records", "--proposal", proposal.proposalId,
+      "--hash", proposal.changeSetDigest, "--json",
+    ], capture().io, { cwd });
+
+    const views = capture();
+    expect(await runCli([
+      "module", "views", "--module", "local.habit-tracker",
+      "--workspace", "habit-records", "--json",
+    ], views.io, { cwd })).toBe(0);
+    expect(JSON.parse(views.stdout[0] ?? "")).toMatchObject({
+      ok: true,
+      command: "module.views",
+      data: expect.arrayContaining([
+        expect.objectContaining({ moduleId: "local.habit-tracker", id: "daily-check-in", collection: "habit-entry" }),
+      ]),
+    });
+
+    const created = capture();
+    expect(await runCli([
+      "habit", "create", "--id", "meditation", "--name", "Meditation",
+      "--workspace", "habit-records", "--json",
+    ], created.io, { cwd })).toBe(0);
+    expect(JSON.parse(created.stdout[0] ?? "")).toMatchObject({
+      ok: true,
+      command: "habit.create",
+      data: {
+        moduleId: "local.habit-tracker",
+        collectionId: "habit",
+        recordId: "meditation",
+        version: 1,
+        data: { habitId: "meditation", name: "Meditation" },
+      },
+    });
+
+    const logged = capture();
+    expect(await runCli([
+      "habit", "log", "--habit", "meditation", "--entry", "meditation-2026-07-29",
+      "--date", "2026-07-29", "--workspace", "habit-records", "--json",
+    ], logged.io, { cwd })).toBe(0);
+    expect(JSON.parse(logged.stdout[0] ?? "")).toMatchObject({
+      ok: true,
+      command: "habit.log",
+      data: {
+        collectionId: "habit-entry",
+        recordId: "meditation-2026-07-29",
+        data: { habitId: "meditation", completedOn: "2026-07-29" },
+      },
+    });
+
+    const listed = capture();
+    expect(await runCli([
+      "records", "list", "--module", "local.habit-tracker", "--collection", "habit-entry",
+      "--workspace", "habit-records", "--json",
+    ], listed.io, { cwd })).toBe(0);
+    expect(JSON.parse(listed.stdout[0] ?? "")).toMatchObject({
+      ok: true,
+      command: "records.list",
+      data: [expect.objectContaining({ recordId: "meditation-2026-07-29" })],
+    });
+
+    const builtIns = capture();
+    expect(await runCli([
+      "records", "list", "--module", "aimoto.tasks", "--workspace", "habit-records", "--json",
+    ], builtIns.io, { cwd })).toBe(0);
+    expect(JSON.parse(builtIns.stdout[0] ?? "")).toMatchObject({
+      ok: true,
+      command: "records.list",
+      data: [],
+    });
+  });
+
+  it("turns an ordinary outcome request into a reviewable proposal without applying it", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["init", "Ordinary Life", "--root", "ordinary", "--json"], capture().io, { cwd });
+    const requested = capture();
+    expect(await runCli([
+      "request", "Help me track meditation every day", "--workspace", "ordinary", "--json",
+    ], requested.io, { cwd })).toBe(0);
+    const response = JSON.parse(requested.stdout[0] ?? "");
+    expect(response).toMatchObject({
+      ok: true,
+      command: "request",
+      data: {
+        understoodAs: expect.stringContaining("habits"),
+        changesApplied: false,
+        approvalRequired: true,
+        explanation: expect.stringContaining("Nothing has been installed"),
+        plan: { displayName: "Habit Tracker" },
+        proposal: { status: "pending", baseRevision: 0 },
+        next: { action: "review", commandTemplate: expect.stringContaining("aimoto apply") },
+      },
+    });
+    const inspection = capture();
+    await runCli(["inspect", "--workspace", "ordinary", "--json"], inspection.io, { cwd });
+    const unchanged = JSON.parse(inspection.stdout[0] ?? "").data;
+    expect(unchanged.revision).toBe(0);
+    expect(unchanged.modules.some((module: { moduleId: string }) => module.moduleId === "local.habit-tracker")).toBe(false);
+  });
+
+  it("honestly rejects unsupported outcomes without changing the workspace", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["init", "Unsupported Need", "--root", "unsupported", "--json"], capture().io, { cwd });
+    const requested = capture();
+    expect(await runCli([
+      "request", "Prepare and file my business taxes", "--workspace", "unsupported", "--json",
+    ], requested.io, { cwd })).toBe(2);
+    expect(JSON.parse(requested.stdout[0] ?? "")).toMatchObject({
+      ok: false,
+      command: "request",
+      error: {
+        code: "InvalidInput",
+        message: expect.stringContaining("cannot safely fulfill"),
+        details: {
+          changesApplied: false,
+          supportedOutcomes: [expect.stringContaining("habits")],
+        },
+      },
+    });
+    const inspection = capture();
+    await runCli(["inspect", "--workspace", "unsupported", "--json"], inspection.io, { cwd });
+    const unchanged = JSON.parse(inspection.stdout[0] ?? "").data;
+    expect(unchanged.revision).toBe(0);
+    expect(unchanged.modules.some((module: { moduleId: string }) => module.moduleId === "local.habit-tracker")).toBe(false);
   });
 });

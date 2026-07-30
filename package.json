@@ -9,7 +9,8 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r build",
-    "validate": "pnpm typecheck && pnpm test"
+    "test:acceptance-verifier": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/acceptance/Test-SemanticVerifier.ps1",
+    "validate": "pnpm typecheck && pnpm test && pnpm test:acceptance-verifier"
   },
   "devDependencies": {
     "@types/node": "^24.1.0",
