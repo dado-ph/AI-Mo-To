@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../cli" },
+    { "path": "../../packages/engine" },
+    { "path": "../../packages/ui-primitives" }
+  ]
+}

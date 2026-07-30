@@ -1,0 +1,43 @@
+name: Desktop installer
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-windows:
+    name: Package Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build installer
+        run: pnpm --filter @ai-mo-to/desktop dist
+      - name: Verify installer exists
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem 'apps/desktop/release' -Filter 'AI-Mo-To-Setup-*.exe' -File
+          if ($installer.Count -ne 1) {
+            throw "Expected one installer, found $($installer.Count)."
+          }
+      - name: Retain installer for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-mo-to-windows-installer
+          path: apps/desktop/release/AI-Mo-To-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 14

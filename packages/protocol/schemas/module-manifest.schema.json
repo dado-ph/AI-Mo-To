@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-mo-to.dev/schemas/v1/module-manifest.schema.json",
+  "title": "AI-Mo-To Module Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "moduleId",
+    "name",
+    "version",
+    "trustTier",
+    "collections",
+    "views",
+    "commands",
+    "events",
+    "capabilities",
+    "migrations"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "moduleId": { "type": "string", "pattern": "^[a-z][a-z0-9.-]+$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+    "trustTier": {
+      "enum": ["core", "local-generated", "verified-community", "community"]
+    },
+    "handler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime", "entrypoint"],
+      "properties": {
+        "runtime": { "const": "node" },
+        "entrypoint": { "type": "string", "pattern": "^(?![A-Za-z]:|/)(?!.*\\.\\.).+$" }
+      }
+    },
+    "collections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/declaration" }
+    },
+    "views": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/declaration" },
+          {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "enum": ["form", "list", "table", "detail", "timeline"]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/declaration" }
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/declaration" }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "entrypoint"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "entrypoint": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "declaration": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9.-]+$" }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-mo-to.dev/schemas/v1/workspace-manifest.schema.json",
+  "title": "AI-Mo-To Workspace Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workspaceId",
+    "name",
+    "createdAt",
+    "revision",
+    "modules",
+    "layout",
+    "capabilities",
+    "eventRoutes",
+    "aiAdapter",
+    "authorityMode",
+    "contextPolicy",
+    "snapshotPolicy"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "workspaceId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "revision": { "type": "integer", "minimum": 0 },
+    "modules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/modulePin" },
+      "uniqueItems": true
+    },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["homeView", "views"],
+      "properties": {
+        "homeView": { "type": "string", "minLength": 1 },
+        "views": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "moduleId", "viewId"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "moduleId": { "type": "string", "minLength": 1 },
+              "viewId": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability", "grantId"],
+        "properties": {
+          "capability": { "type": "string", "minLength": 1 },
+          "grantId": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "eventRoutes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/eventRoute" }
+    },
+    "aiAdapter": { "type": "string", "minLength": 1 },
+    "authorityMode": {
+      "enum": ["observe", "suggest", "assist", "execute", "build"]
+    },
+    "contextPolicy": { "type": "string", "minLength": 1 },
+    "snapshotPolicy": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "modulePin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["moduleId", "version", "digest", "source"],
+      "properties": {
+        "moduleId": { "type": "string", "pattern": "^[a-z][a-z0-9.-]+$" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+        "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reference"],
+          "properties": {
+            "kind": {
+              "enum": ["builtin", "local", "verified-community", "community"]
+            },
+            "reference": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "eventEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["moduleId"],
+      "properties": {
+        "moduleId": { "type": "string", "minLength": 1 },
+        "event": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 }
+      }
+    },
+    "eventRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "target", "maxCausalDepth", "maxRouteDepth"],
+      "properties": {
+        "source": {
+          "allOf": [
+            { "$ref": "#/$defs/eventEndpoint" },
+            { "type": "object", "required": ["event"] }
+          ]
+        },
+        "target": {
+          "allOf": [
+            { "$ref": "#/$defs/eventEndpoint" },
+            { "type": "object", "required": ["command"] }
+          ]
+        },
+        "maxCausalDepth": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "maxRouteDepth": { "type": "integer", "minimum": 1, "maximum": 32 }
+      }
+    }
+  }
+}

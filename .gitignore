@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.log
+*.tsbuildinfo
+apps/desktop/release/
+apps/desktop/release-installer/
+apps/desktop/release-package-check*/
+apps/desktop/release-*/
+apps/desktop/resources/

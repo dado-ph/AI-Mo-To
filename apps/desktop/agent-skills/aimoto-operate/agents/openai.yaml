@@ -1,0 +1,4 @@
+interface:
+  display_name: "Operate AI-Mo-To"
+  short_description: "Turn everyday needs into reviewed local tools"
+  default_prompt: "Use $aimoto-operate to set up a simple local tool for my need."

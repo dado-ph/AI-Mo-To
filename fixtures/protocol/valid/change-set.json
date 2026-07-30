@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0.0",
+  "changeSetId": "d49b2144-17a8-4a1c-8f3e-01e92d6c6e5e",
+  "workspaceId": "default-workspace",
+  "baseRevision": 0,
+  "createdAt": "2026-07-29T00:00:00.000Z",
+  "operations": [
+    {
+      "operationId": "install-habit-tracker",
+      "kind": "module.install",
+      "input": {
+        "moduleId": "ai-mo-to.habit-tracker",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "preconditions": [
+        {
+          "kind": "workspace.revision",
+          "value": 0
+        }
+      ],
+      "effects": [
+        "workspace.composition.write"
+      ],
+      "reversibility": "reversible"
+    }
+  ]
+}
+

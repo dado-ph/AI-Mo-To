@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-mo-to.local/schemas/installed-roleplay-evidence-v2.json",
+  "title": "AI-Mo-To installed-product role-play evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "startedAt", "isolationRoot", "workspaceRoot", "repositoryRoot", "artifact", "phases"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "runId": { "type": "string", "minLength": 1 },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "isolationRoot": { "type": "string", "minLength": 1 },
+    "workspaceRoot": { "type": "string", "minLength": 1 },
+    "repositoryRoot": { "type": "string", "minLength": 1 },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+      }
+    },
+    "phases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["install", "plan", "approval", "inspection", "recovery"],
+      "properties": {
+        "install": { "$ref": "#/$defs/phase" },
+        "plan": { "$ref": "#/$defs/phase" },
+        "approval": { "$ref": "#/$defs/phase" },
+        "inspection": { "$ref": "#/$defs/phase" },
+        "recovery": { "$ref": "#/$defs/phase" }
+      }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": { "enum": ["pending", "passed", "failed"] },
+        "evidence": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

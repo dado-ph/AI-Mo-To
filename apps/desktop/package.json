@@ -1,0 +1,50 @@
+{
+  "name": "@ai-mo-to/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-Mo-To, a local-first desktop workspace application.",
+  "author": "AI-Mo-To contributors",
+  "homepage": "https://github.com/dado-ph/AI-Mo-To#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dado-ph/AI-Mo-To.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dado-ph/AI-Mo-To/issues"
+  },
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "start": "electron .",
+    "dist": "pnpm run build && electron-builder --win nsis --publish never",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-mo-to/cli": "workspace:*",
+    "@ai-mo-to/engine": "workspace:*",
+    "@ai-mo-to/ui-primitives": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "dev.aimoto.desktop",
+    "productName": "AI-Mo-To",
+    "directories": { "output": "release" },
+    "artifactName": "AI-Mo-To-Setup-${version}-${arch}.${ext}",
+    "files": ["dist/**", "package.json", "!**/*.tsbuildinfo"],
+    "extraResources": [
+      { "from": "resources/modules", "to": "modules" },
+      { "from": "resources/agent-skills", "to": "agent-skills" },
+      { "from": "build/aimoto-launcher.ps1", "to": "launcher/aimoto-launcher.ps1" }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh"
+    }
+  }
+}

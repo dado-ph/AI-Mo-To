@@ -1,0 +1,30 @@
+name: Bug report
+description: Report behavior that differs from the documentation.
+title: "bug: "
+labels: [bug]
+body:
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Run ...\n2. Then ..."
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: AI-Mo-To version or commit
+    validations:
+      required: true

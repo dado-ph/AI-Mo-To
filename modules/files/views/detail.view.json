@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "detail",
+  "kind": "detail",
+  "title": "File details",
+  "root": {
+    "type": "detail",
+    "bind": "selection.file",
+    "children": [
+      { "type": "field", "label": "Name", "bind": "name" },
+      { "type": "field", "label": "Path", "bind": "relativePath" },
+      { "type": "field", "label": "Updated", "bind": "updatedAt" }
+    ]
+  }
+}
