@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
   <title>AI-Mo-To Workspace</title>
-  <link rel="stylesheet" href="../../packages/ui-primitives/src/tokens.css" />
+  <link rel="stylesheet" href="./tokens.css" />
   <style>
     * { box-sizing: border-box; }
     body {
@@ -155,6 +155,15 @@
     }
     .view-card h2 { font-size: 0.95rem; margin: 0; padding: var(--aimoto-space-md) var(--aimoto-space-md) 0; }
     .view-card p { color: var(--aimoto-muted); font-size: 0.8rem; margin: var(--aimoto-space-xs) var(--aimoto-space-md) var(--aimoto-space-md); }
+    .app-frame {
+      background: var(--aimoto-panel);
+      border: 1px solid var(--aimoto-line);
+      border-radius: var(--aimoto-radius-md);
+      height: calc(100vh - 170px);
+      min-height: 520px;
+      width: 100%;
+    }
+    .views-grid.app-active { display: block; }
 
     .terminal {
       background: var(--aimoto-panel);
@@ -227,7 +236,7 @@
       </button>
 
       <div class="nav-label">Modules</div>
-      <nav id="module-nav" class="module-nav" aria-label="Workspace modules">
+      <nav id="module-nav" class="module-nav" aria-label="Workspace modules"><!-- populated from workspace manifest -->
         <button class="module-button active" data-filter="all" type="button">
           <span aria-hidden="true">⌂</span><span>Overview</span>
         </button>

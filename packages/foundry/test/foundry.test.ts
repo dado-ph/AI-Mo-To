@@ -13,6 +13,7 @@ import {
   verifyStagedModule,
 } from "../src/index.js";
 import type { FoundryProposal, GeneratedModuleBundle, ModulePlan } from "../src/index.js";
+import { createFoundryContext, FOUNDRY_GUIDE } from "../src/index.js";
 
 const plan: ModulePlan = {
   requestId: "request-habits",
@@ -41,6 +42,13 @@ const bundle: GeneratedModuleBundle = {
 };
 
 describe("Foundry staging", () => {
+  it("provides agent context without limiting the request to a product type", () => {
+    const context = createFoundryContext({ request: "invent a new workflow", repositoryPath: "C:/tmp/app" });
+    expect(context).toContain(FOUNDRY_GUIDE);
+    expect(context).toContain("invent a new workflow");
+    expect(context).toContain("C:/tmp/app/aimoto.manifest.json");
+    expect(context).not.toContain("habit tracker");
+  });
   it("generates the same locally validated Habit Tracker bundle for the no-key agent proof", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "aimoto-habit-proof-"));
     const first = createHabitTrackerBundle();
@@ -208,5 +216,46 @@ describe("Foundry staging", () => {
       operationId: "install-existing",
       createdAt: "2026-07-29T10:00:00.000Z",
     })).toThrow(FoundryProposalConversionError);
+  });
+
+  it("stages a Task Manager module for task outcomes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "aimoto-task-proof-"));
+    const { createTaskManagerFoundry, createTaskManagerPlan } = await import("../src/index.js");
+    const staged = await createTaskManagerFoundry(path.join(root, "staging")).stage(
+      { requestId: "req-task", workspaceId: "ws-task", text: "Manage project todos" },
+      createTaskManagerPlan("req-task"),
+    );
+    expect(staged).toMatchObject({
+      ok: true,
+      proposal: { kind: "install-generated", module: { moduleId: "local.task-manager" } },
+    });
+  });
+
+  it("stages a Research Collector module for research/notes outcomes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "aimoto-research-proof-"));
+    const { createResearchCollectorFoundry, createResearchCollectorPlan } = await import("../src/index.js");
+    const staged = await createResearchCollectorFoundry(path.join(root, "staging")).stage(
+      { requestId: "req-research", workspaceId: "ws-research", text: "Save paper notes" },
+      createResearchCollectorPlan("req-research"),
+    );
+    expect(staged).toMatchObject({
+      ok: true,
+      proposal: { kind: "install-generated", module: { moduleId: "local.research-collector" } },
+    });
+  });
+
+  it("stages a dynamic tracker module for arbitrary custom requests", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "aimoto-dynamic-proof-"));
+    const { createDynamicTrackerFoundry, createDynamicTrackerPlan } = await import("../src/index.js");
+    const requestText = "Track my daily coffee expenses and budget log";
+    const plan = createDynamicTrackerPlan("req-custom", requestText);
+    const staged = await createDynamicTrackerFoundry(path.join(root, "staging"), requestText).stage(
+      { requestId: "req-custom", workspaceId: "ws-custom", text: requestText },
+      plan,
+    );
+    expect(staged).toMatchObject({
+      ok: true,
+      proposal: { kind: "install-generated", module: { moduleId: expect.stringMatching(/^local\./) } },
+    });
   });
 });

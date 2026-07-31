@@ -13,9 +13,13 @@ const packagedModules = resolve(appRoot, "resources", "modules");
 const agentSkills = resolve(appRoot, "agent-skills");
 const packagedAgentSkills = resolve(appRoot, "resources", "agent-skills");
 
+const tokensSource = resolve(appRoot, "..", "..", "packages", "ui-primitives", "src", "tokens.css");
+const tokensDestination = resolve(appRoot, "dist", "tokens.css");
+
 await mkdir(dirname(destination), { recursive: true });
 await cp(source, destination);
 await cp(preloadSource, preloadDestination);
+await cp(tokensSource, tokensDestination);
 await mkdir(dirname(packagedModules), { recursive: true });
 await cp(builtInModules, packagedModules, { recursive: true });
 await mkdir(dirname(packagedAgentSkills), { recursive: true });

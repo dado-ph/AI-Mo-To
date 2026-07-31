@@ -1,6 +1,7 @@
 import { access, cp, readdir, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
 import { digestBundle, verifyStagedModule } from "@ai-mo-to/foundry";
@@ -167,8 +168,10 @@ export interface InstalledModuleView {
   moduleId: string;
   id: string;
   title: string;
-  kind: "form" | "list" | "table" | "detail" | "timeline";
+  kind: "form" | "list" | "table" | "detail" | "timeline" | "app";
   collection: string;
+  /** Sandboxed, installed HTML entrypoint for a generated application view. */
+  entryUrl?: string;
 }
 
 export interface ExecuteHabitTrackerCommandInput {
@@ -380,6 +383,27 @@ function applyOperations(
         throw new EngineError("ValidationFailed", `Module ${module.moduleId} is already installed.`);
       }
       next = { ...next, modules: [...next.modules, module] };
+      // A generated application may define its own workspace surface.  The
+      // module remains the durable artifact, while this optional layout is the
+      // reviewed workspace composition that the agent proposed.  Keep the
+      // trust substrate in the host manifest; only navigation/views are
+      // replaceable by generated workspaces.
+      const candidateLayout = operation.input.workspaceLayout;
+      if (candidateLayout && typeof candidateLayout === "object") {
+        const layout = candidateLayout as { homeView?: unknown; views?: unknown };
+        if (typeof layout.homeView !== "string" || !Array.isArray(layout.views)) {
+          throw new EngineError("ValidationFailed", "Generated workspace layout must define homeView and views.");
+        }
+        const views = layout.views.filter((view): view is { id: string; moduleId: string; viewId: string } =>
+          Boolean(view && typeof view === "object" && typeof (view as any).id === "string" && typeof (view as any).moduleId === "string" && typeof (view as any).viewId === "string"));
+        if (views.length !== layout.views.length || views.length === 0) {
+          throw new EngineError("ValidationFailed", "Generated workspace layout contains invalid views.");
+        }
+        if (!views.some((view) => view.id === layout.homeView)) {
+          throw new EngineError("ValidationFailed", "Generated workspace homeView must reference a declared view.");
+        }
+        next = { ...next, layout: { homeView: layout.homeView, views } };
+      }
       continue;
     }
 
@@ -697,31 +721,62 @@ export class WorkspaceEngine {
       if (declarationPath !== directory && !declarationPath.startsWith(`${directory}\\`) && !declarationPath.startsWith(`${directory}/`)) {
         throw new EngineError("ValidationFailed", "A module view declaration escaped its installed bundle.");
       }
-      const declaration = JSON.parse(await readFile(declarationPath, "utf8")) as { title?: unknown; kind?: unknown; collection?: unknown };
-      if (typeof declaration.title !== "string" || typeof declaration.collection !== "string" || declaration.kind !== view.kind) {
+      const declaration = JSON.parse(await readFile(declarationPath, "utf8")) as {
+        title?: unknown;
+        kind?: unknown;
+        collection?: unknown;
+        entry?: unknown;
+        root?: { bind?: unknown };
+      };
+      const collection = typeof declaration.collection === "string"
+        ? declaration.collection
+        : typeof declaration.root?.bind === "string" && declaration.root.bind.startsWith("collections.")
+          ? declaration.root.bind.replace(/^collections\./, "")
+          : "default";
+      if (typeof declaration.title !== "string" || declaration.kind !== view.kind) {
         throw new EngineError("ValidationFailed", `Module ${moduleId} view ${view.id} is invalid.`);
+      }
+      let entryUrl: string | undefined;
+      if (view.kind === "app") {
+        if (typeof declaration.entry !== "string") {
+          throw new EngineError("ValidationFailed", `Module ${moduleId} app view ${view.id} has no HTML entrypoint.`);
+        }
+        const entryPath = resolve(directory, declaration.entry);
+        if (
+          extname(entryPath).toLowerCase() !== ".html" ||
+          (entryPath !== directory && !entryPath.startsWith(`${directory}\\`) && !entryPath.startsWith(`${directory}/`))
+        ) {
+          throw new EngineError("ValidationFailed", `Module ${moduleId} app view ${view.id} has an invalid entrypoint.`);
+        }
+        await access(entryPath);
+        entryUrl = pathToFileURL(entryPath).href;
       }
       return {
         moduleId,
         id: view.id,
         title: declaration.title,
         kind: view.kind as InstalledModuleView["kind"],
-        collection: declaration.collection
+        collection,
+        ...(entryUrl ? { entryUrl } : {})
       };
     }));
   }
 
-  async listHabitTrackerRecords(rootInput: string, collectionId: "habit" | "habit-entry"): Promise<readonly BuiltInRecord[]> {
+  async listInstalledModuleRecords(rootInput: string, moduleId: string, collectionId: string): Promise<readonly BuiltInRecord[]> {
     const root = resolve(rootInput);
     const workspace = await this.inspectWorkspace(root);
-    if (!workspace.modules.some((module) => module.moduleId === "local.habit-tracker")) {
-      throw new EngineError("ModuleNotInstalled", "Habit Tracker is not installed in this workspace.");
+    if (!workspace.modules.some((module) => module.moduleId === moduleId)) {
+      throw new EngineError("ModuleNotInstalled", `Module ${moduleId} is not installed in this workspace.`);
     }
     const store = new WorkspaceStore(workspaceDatabasePath(root));
     try {
       store.initialize();
-      return store.listRecords("local.habit-tracker", collectionId);
+      return store.listRecords(moduleId, collectionId);
     } finally { store.close(); }
+  }
+
+  async listHabitTrackerRecords(rootInput: string, collectionId: string): Promise<readonly BuiltInRecord[]> {
+    return this.listInstalledModuleRecords(rootInput, "local.habit-tracker", collectionId);
   }
 
   /** Executes the generated proof module through engine-owned storage, never its generated handler file. */

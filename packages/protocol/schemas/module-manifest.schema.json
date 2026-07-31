@@ -48,7 +48,7 @@
             "required": ["kind"],
             "properties": {
               "kind": {
-                "enum": ["form", "list", "table", "detail", "timeline"]
+                "enum": ["form", "list", "table", "detail", "timeline", "app"]
               }
             }
           }
@@ -92,4 +92,3 @@
     }
   }
 }
-

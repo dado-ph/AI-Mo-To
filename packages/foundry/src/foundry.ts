@@ -105,7 +105,12 @@ export class Foundry {
         await rename(temporaryDirectory, finalDirectory);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if (code !== "EEXIST" && code !== "ENOTEMPTY") throw error;
+        if (code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM" || code === "EACCES") {
+          await rm(finalDirectory, { recursive: true, force: true });
+          await rename(temporaryDirectory, finalDirectory);
+        } else {
+          throw error;
+        }
       }
     } finally {
       await rm(temporaryDirectory, { recursive: true, force: true });

@@ -4,6 +4,38 @@
 
 AI-Mo-To is a local-first desktop application and CLI tool designed to turn modest requirements into modular, inspectable, recoverable software workspaces. Rather than letting AI models execute opaque, un-audited code directly on your system, AI-Mo-To enforces **human approval**, **bounded capabilities**, and **5 distinct authority states** before any workspace state is changed.
 
+## The North-Star Goal
+
+AI-Mo-To is a general-purpose, human-controlled AI application-building
+harness. A person should be able to describe an arbitrary need in ordinary
+language, and AI-Mo-To should give a configured coding agent such as Codex CLI
+an isolated application repository together with the Foundry guide. The agent
+may reason about the need and create novel source code; the Foundry guides the
+stack, design quality, accessibility, safety and integration boundaries without
+being a catalogue of pre-written applications.
+
+The generated application is validated, previewed and bound to a digest before
+AI-Mo-To presents it as a proposal. Nothing is installed or run until the
+person reviews and explicitly approves that exact proposal. Example requests
+are probes of this general flow, not features to hard-code into the product.
+
+The workspace itself may be generated around the request as well. Files,
+Tasks, or any other familiar surfaces are optional similarities, not mandatory
+modules. Every workspace should retain the Foundry's minimum trust substrate—
+authority, capabilities, provenance, health, recovery and access to the
+installed application—while its useful layout and interactions remain specific
+to the person's need.
+
+```text
+arbitrary user need
+  → isolated generated-app repository
+  → external coding agent + Foundry guidance
+  → build, test and capability validation
+  → digest-bound human proposal
+  → explicit approval
+  → local application in the user workspace
+```
+
 ---
 
 ## 🌟 Key Features
@@ -77,7 +109,7 @@ The compiled desktop installer is written to `apps/desktop/release/`.
 * **`apps/desktop`**: The installable Electron desktop application powered by `@ai-mo-to/ui-primitives`.
 * **`packages/engine`**: Core workspace kernel enforcing `AuthorityStateGuard`, revisions, and proposal lifecycle.
 * **`packages/protocol`**: JSON Schemas, canonical types, and approval/proposal audit contracts.
-* **`packages/foundry`**: Staging engine for local module generation, habit tracking proofs, and content-addressed bundles.
+* **`packages/foundry`**: Reasoning, stack, UI/UX and safety guidance plus staging and content-addressing support for agent-built applications; it is not a finite catalogue of application types.
 * **`packages/snapshot`**: Deterministic snapshot creation, verification, and recovery engine.
 * **`packages/storage`**: Local SQLite database and JSON storage abstractions.
 * **`packages/ui-primitives`**: Framework-free design tokens (`tokens.css`), WCAG 2.2 AA accessibility components, and authority badges.
