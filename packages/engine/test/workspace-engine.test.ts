@@ -357,6 +357,31 @@ describe("WorkspaceEngine", () => {
     ]);
   });
 
+  it("commits an agent-proposed workspace surface with the generated app", async () => {
+    const root = await temporaryWorkspace();
+    const engine = new WorkspaceEngine();
+    const workspace = await engine.createWorkspace({ root, name: "Generated Notebook" });
+    const bundle = createHabitTrackerBundle();
+    const digest = digestBundle(bundle.files);
+    const directory = join(root, "generated-app");
+    for (const file of bundle.files) {
+      await mkdir(join(directory, file.path, ".."), { recursive: true });
+      await writeFile(join(directory, file.path), file.content);
+    }
+    const proposal = await engine.createProposal({ root, proposalId: "b1f3a7d4-2f1d-4ed9-b7f2-13dfd86ed4a4", changeSet: {
+      schemaVersion: "1.0.0", changeSetId: "7b4cb9aa-4d6f-47de-bf0b-e7f5f3c0e924", workspaceId: workspace.workspaceId,
+      baseRevision: 0, createdAt: "2026-07-29T00:00:00.000Z", operations: [{
+        operationId: "install-generated-notebook", kind: "module.install", input: {
+          module: { moduleId: "local.generated-notebook", version: "0.1.0", digest, source: { kind: "local", reference: directory } },
+          workspaceLayout: { homeView: "notebook.home", views: [{ id: "notebook.home", moduleId: "local.generated-notebook", viewId: "home" }] }
+        }, preconditions: [], effects: ["app.generated.install"], reversibility: "transactional"
+      }]
+    }});
+    const committed = await engine.approveProposal({ root, approval: { schemaVersion: "1.0.0", approvalId: "71d1b398-9b4d-4b2a-9c6f-a1b1d37cb0aa", proposalId: proposal.proposalId, workspaceId: workspace.workspaceId, baseRevision: 0, changeSetDigest: proposal.changeSetDigest, approvedAt: "2026-07-29T00:01:00.000Z" } });
+    expect(committed.layout).toEqual({ homeView: "notebook.home", views: [{ id: "notebook.home", moduleId: "local.generated-notebook", viewId: "home" }] });
+    expect(committed.modules).toEqual(expect.arrayContaining([expect.objectContaining({ moduleId: "local.generated-notebook" })]));
+  });
+
   it("creates, verifies, lists, and safely plans recovery snapshots", async () => {
     const root = await temporaryWorkspace();
     const engine = new WorkspaceEngine();

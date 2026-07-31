@@ -38,7 +38,6 @@ afterEach(async () => {
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
   );
 });
-
 describe("aimoto CLI", () => {
   it("prefers the packaged host when the installer used a custom directory", () => {
     expect(desktopExecutableCandidates(
@@ -599,7 +598,7 @@ describe("aimoto CLI", () => {
       ok: true,
       command: "request",
       data: {
-        understoodAs: expect.stringContaining("habits"),
+        understoodAs: expect.stringContaining("Habit Tracker"),
         changesApplied: false,
         approvalRequired: true,
         explanation: expect.stringContaining("Nothing has been installed"),
@@ -615,29 +614,71 @@ describe("aimoto CLI", () => {
     expect(unchanged.modules.some((module: { moduleId: string }) => module.moduleId === "local.habit-tracker")).toBe(false);
   });
 
-  it("honestly rejects unsupported outcomes without changing the workspace", async () => {
+  it("creates dynamic custom tracker proposals for arbitrary requests", async () => {
     const cwd = await temporaryDirectory();
-    await runCli(["init", "Unsupported Need", "--root", "unsupported", "--json"], capture().io, { cwd });
+    await runCli(["init", "Custom Need", "--root", "custom", "--json"], capture().io, { cwd });
     const requested = capture();
     expect(await runCli([
-      "request", "Prepare and file my business taxes", "--workspace", "unsupported", "--json",
-    ], requested.io, { cwd })).toBe(2);
+      "request", "Track my daily coffee expenses and budget log", "--workspace", "custom", "--json",
+    ], requested.io, { cwd })).toBe(0);
     expect(JSON.parse(requested.stdout[0] ?? "")).toMatchObject({
-      ok: false,
+      ok: true,
       command: "request",
-      error: {
-        code: "InvalidInput",
-        message: expect.stringContaining("cannot safely fulfill"),
-        details: {
-          changesApplied: false,
-          supportedOutcomes: [expect.stringContaining("habits")],
-        },
+      data: {
+        changesApplied: false,
+        approvalRequired: true,
+        stagedModule: { moduleId: expect.stringMatching(/^local\./) },
+        proposal: { status: "pending", baseRevision: 0 },
       },
     });
-    const inspection = capture();
-    await runCli(["inspect", "--workspace", "unsupported", "--json"], inspection.io, { cwd });
-    const unchanged = JSON.parse(inspection.stdout[0] ?? "").data;
-    expect(unchanged.revision).toBe(0);
-    expect(unchanged.modules.some((module: { moduleId: string }) => module.moduleId === "local.habit-tracker")).toBe(false);
+  });
+
+  it("resolves default workspace when --workspace is omitted on request", async () => {
+    const cwd = await temporaryDirectory();
+    const output = capture();
+    const env = { LOCALAPPDATA: join(cwd, "AppData", "Local") };
+    expect(await runCli(["request", "Help me track meditation every day", "--json"], output.io, { cwd, environment: env })).toBe(0);
+    const data = JSON.parse(output.stdout[0] ?? "").data;
+    expect(data.stagedModule.directory).toContain(join(cwd, "AppData", "Local", "AI-Mo-To", "workspaces", "default"));
+  });
+
+  it("renders aimoto plan human output with proposal ID and interpolated apply command", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["init", "Plan Human Workspace", "--root", "plan-human", "--json"], capture().io, { cwd });
+    const output = capture();
+    const exitCode = await runCli(["plan", "--workspace", "plan-human", "--set-authority", "build"], output.io, { cwd });
+
+    expect(exitCode).toBe(0);
+    const text = output.stdout.join("\n");
+    expect(text).toContain("Proposal created and ready for human review.");
+    expect(text).toContain("plan-human-workspace");
+    expect(text).toContain("aimoto apply --workspace plan-human --proposal ");
+  });
+
+  it("interpolates exact workspace path into aimoto request human output", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["init", "Request Human Workspace", "--root", "req-human", "--json"], capture().io, { cwd });
+    const output = capture();
+    const exitCode = await runCli(["request", "Help me track meditation every day", "--workspace", "req-human"], output.io, { cwd });
+
+    expect(exitCode).toBe(0);
+    const text = output.stdout.join("\n");
+    expect(text).toContain("Habit Tracker is ready for your review.");
+    expect(text).toContain("aimoto apply --workspace req-human --proposal ");
+
+    // Re-running request should succeed without staging collision / EPERM errors on Windows
+    const secondOutput = capture();
+    const secondExit = await runCli(["request", "Help me track meditation every day", "--workspace", "req-human"], secondOutput.io, { cwd });
+    expect(secondExit).toBe(0);
+  });
+
+  it("rejects invalid authority mode in plan command with supported modes list", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["init", "Invalid Authority Mode", "--root", "inv-auth", "--json"], capture().io, { cwd });
+    const output = capture();
+    const exitCode = await runCli(["plan", "--workspace", "inv-auth", "--set-authority", "superpower"], output.io, { cwd });
+
+    expect(exitCode).toBe(2);
+    expect(output.stderr[0]).toContain('Invalid authority mode "superpower". Supported modes: observe, suggest, assist, execute, build.');
   });
 });

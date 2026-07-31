@@ -1,8 +1,31 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { execFile, spawn } from "node:child_process";
+import { access, mkdtemp, rm, readFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { dirname, extname, join, resolve } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+export async function createDesktopShortcut(workspaceName: string, workspaceRoot: string): Promise<string> {
+  const desktopDir = join(homedir(), "Desktop");
+  const shortcutPath = join(desktopDir, `${workspaceName}.lnk`);
+  const aimotoCmd = join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "Microsoft", "WindowsApps", "aimoto.cmd");
+  const psScript = `
+    $WshShell = New-Object -ComObject WScript.Shell;
+    $Shortcut = $WshShell.CreateShortcut('${shortcutPath.replace(/'/g, "''")}');
+    $Shortcut.TargetPath = '${aimotoCmd.replace(/'/g, "''")}';
+    $Shortcut.Arguments = 'open --workspace "${workspaceRoot.replace(/"/g, '""')}"';
+    $Shortcut.Description = 'Open ${workspaceName} in AI-Mo-To';
+    $Shortcut.Save();
+  `;
+  try {
+    await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psScript]);
+    return shortcutPath;
+  } catch (err) {
+    return shortcutPath;
+  }
+}
 
 import {
   EngineError,
@@ -17,10 +40,23 @@ import {
   type JsonEnvelope
 } from "@ai-mo-to/protocol";
 import {
+  createDynamicTrackerFoundry,
+  createDynamicTrackerPlan,
   createHabitTrackerFoundry,
   createHabitTrackerPlan,
+  createResearchCollectorFoundry,
+  createResearchCollectorPlan,
+  createTaskManagerFoundry,
+  createTaskManagerPlan,
   proposalToModuleInstallChangeSet,
+  allocateAgentAppRepository,
+  DEFAULT_AGENT_GUIDE,
+  createCodexCliProvider,
+  type AgentProvider,
+  verifyStagedModule,
+  digestStagedModule,
 } from "@ai-mo-to/foundry";
+import { registerWorkspace, resolveRegisteredWorkspace } from "./workspace-registry.js";
 
 export interface CliIo {
   stdout(message: string): void;
@@ -38,6 +74,8 @@ export interface CliDependencies {
   runtimeExecutable?: string;
   openDesktop?: (workspaceRoot: string) => Promise<{ launched: boolean; executable: string }>;
   doctorBootstrapProbe?: (engine: WorkspaceEngine) => Promise<DoctorCheck>;
+  /** Optional external coding-agent adapter used by `request --agent`. */
+  agentProvider?: AgentProvider;
 }
 
 type DoctorCheck = {
@@ -211,58 +249,178 @@ function envelope<T>(
   return value;
 }
 
-function renderInspection(inspection: WorkspaceInspection): string {
+const ANSI = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  gold: "\x1b[38;2;240;192;60m",
+  goldBold: "\x1b[1;38;2;245;200;65m",
+  goldDim: "\x1b[38;2;190;150;50m",
+  forestGreen: "\x1b[38;2;52;168;104m",
+  forestGreenBold: "\x1b[1;38;2;60;185;115m",
+  darkForestGreen: "\x1b[38;2;30;95;55m",
+  emeraldGreen: "\x1b[38;2;80;200;120m",
+  red: "\x1b[38;2;235;87;87m",
+  redBold: "\x1b[1;38;2;245;100;100m"
+};
+
+function supportsColor(): boolean {
+  if (process.env.NO_COLOR || process.env.NODE_DISABLE_COLORS) return false;
+  return Boolean(process.stdout?.isTTY ?? true);
+}
+
+function renderAsciiBanner(color: boolean = supportsColor()): string {
+  const g = color ? ANSI.goldBold : "";
+  const f = color ? ANSI.forestGreenBold : "";
+  const r = color ? ANSI.reset : "";
+  const df = color ? ANSI.darkForestGreen : "";
+  const sub = color ? ANSI.gold : "";
+
   return [
-    `${inspection.name} (${inspection.workspaceId})`,
-    `Root: ${inspection.root}`,
-    `Revision: ${inspection.revision}`,
-    `Modules: ${inspection.modules.length}`,
-    `Authority: ${inspection.authorityMode}`,
-    `Health: ${inspection.health}`,
-    `History: ${inspection.evidence.revisions.length} revisions · ${inspection.evidence.approvals.length} approvals`,
-    `Records: ${inspection.evidence.recordHealth.totalRecords} healthy`
+    "",
+    "",
+    `${g}  █████╗ ██╗   ███╗   ███╗ ██████╗       ████████╗██████╗ ${r}`,
+    `${g} ██╔══██╗██║   ████╗ ████║██╔═══██╗      ╚══██╔══╝██╔═══██╗${r}`,
+    `${f} ███████║██║   ██╔████╔██║██║   ██║  █████╗  ██║  ██║   ██║${r}`,
+    `${f} ██╔══██║██║   ██║╚██╔╝██║██║   ██║  ╚════╝  ██║  ██║   ██║${r}`,
+    `${f} ██║  ██║██║   ██║ ╚═╝ ██║╚██████╔╝          ██║  ╚██████╔╝${r}`,
+    `${df} ╚═╝  ╚═╝╚═╝   ╚═╝     ╚═╝ ╚═════╝           ╚═╝   ╚═════╝ ${r}`,
+    `${sub}  🌲 Human-Governed Local AI Workspace Foundry 🌲${r}`,
+    ""
   ].join("\n");
 }
 
-function usage(): string {
+function isWorkspaceInspection(result: unknown): result is WorkspaceInspection {
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    "health" in result &&
+    "modules" in result &&
+    "authorityMode" in result
+  );
+}
+
+function isProposal(result: unknown): result is { proposalId: string; workspaceId: string; baseRevision: number; changeSetDigest: string } {
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    "proposalId" in result &&
+    "changeSetDigest" in result
+  );
+}
+
+function renderInspection(inspection: WorkspaceInspection, color: boolean = supportsColor()): string {
+  if (!color) {
+    return [
+      `${inspection.name} (${inspection.workspaceId})`,
+      `Root: ${inspection.root}`,
+      `Revision: ${inspection.revision}`,
+      `Modules: ${inspection.modules.length}`,
+      `Authority: ${inspection.authorityMode}`,
+      `Health: ${inspection.health}`,
+      `History: ${inspection.evidence.revisions.length} revisions · ${inspection.evidence.approvals.length} approvals`,
+      `Records: ${inspection.evidence.recordHealth.totalRecords} healthy`
+    ].join("\n");
+  }
+
+  const g = ANSI.goldBold;
+  const f = ANSI.forestGreen;
+  const fBold = ANSI.forestGreenBold;
+  const e = ANSI.emeraldGreen;
+  const r = ANSI.reset;
+  const dim = ANSI.goldDim;
+
   return [
-    "AI-Mo-To! CLI",
-    "Turn a plain-language need into a local, inspectable, human-approved workspace.",
+    `${g}${inspection.name}${r} ${dim}(${inspection.workspaceId})${r}`,
+    `Root: ${f}${inspection.root}${r}`,
+    `Revision: ${fBold}${inspection.revision}${r}`,
+    `Modules: ${fBold}${inspection.modules.length}${r}`,
+    `Authority: ${g}${inspection.authorityMode}${r}`,
+    `Health: ${inspection.health === "ok" ? `${e}ok${r}` : `${ANSI.red}${inspection.health}${r}`}`,
+    `History: ${f}${inspection.evidence.revisions.length} revisions · ${inspection.evidence.approvals.length} approvals${r}`,
+    `Records: ${e}${inspection.evidence.recordHealth.totalRecords} healthy${r}`
+  ].join("\n");
+}
+
+function renderProposal(
+  proposal: { proposalId: string; workspaceId: string; baseRevision: number; changeSetDigest: string },
+  workspaceRoot?: string,
+  color: boolean = supportsColor()
+): string {
+  const wsFlag = workspaceRoot ? ` --workspace ${workspaceRoot}` : "";
+  const applyCommand = `aimoto apply${wsFlag} --proposal ${proposal.proposalId} --hash ${proposal.changeSetDigest}`;
+
+  if (!color) {
+    return [
+      "Proposal created and ready for human review.",
+      `Workspace: ${proposal.workspaceId} (base revision ${proposal.baseRevision})`,
+      `Proposal ID: ${proposal.proposalId}`,
+      `Exact digest: ${proposal.changeSetDigest}`,
+      `Approve it with: ${applyCommand}`,
+    ].join("\n");
+  }
+
+  const g = ANSI.goldBold;
+  const f = ANSI.forestGreen;
+  const fBold = ANSI.forestGreenBold;
+  const r = ANSI.reset;
+
+  return [
+    `${g}Proposal created and ready for human review.${r}`,
+    `Workspace: ${f}${proposal.workspaceId}${r} (base revision ${fBold}${proposal.baseRevision}${r})`,
+    `Proposal ID: ${f}${proposal.proposalId}${r}`,
+    `Exact digest: ${g}${proposal.changeSetDigest}${r}`,
+    `Approve it with: ${fBold}${applyCommand}${r}`,
+  ].join("\n");
+}
+
+function usage(color: boolean = supportsColor(), showBanner: boolean = color): string {
+  const g = color ? ANSI.goldBold : "";
+  const f = color ? ANSI.forestGreen : "";
+  const fBold = color ? ANSI.forestGreenBold : "";
+  const dim = color ? ANSI.goldDim : "";
+  const r = color ? ANSI.reset : "";
+
+  const banner = showBanner ? renderAsciiBanner(color) : "";
+
+  return [
+    banner + `${g}AI-Mo-To! CLI${r}`,
+    `${f}Turn a plain-language need into a local, inspectable, human-approved workspace.${r}`,
     "",
-    "Start here:",
-    '  aimoto init "<name>" [--root <path>] [--json]',
-    '  aimoto request "<ordinary need>" --workspace <path> [--json]',
-    "  aimoto doctor [--workspace <path>] [--json]",
-    "  aimoto inspect [--workspace <path>] [--json]",
-    "  aimoto module views --module <id> [--workspace <path>] [--json]",
-    "  aimoto records list --module <id> [--collection <id>] [--workspace <path>] [--json]",
-    '  aimoto habit create --id <id> --name "<name>" [--workspace <path>] [--json]',
-    "  aimoto habit log --habit <id> --entry <id> --date <YYYY-MM-DD> [--workspace <path>] [--json]",
-    '  aimoto agent habit plan --workspace <path> [--request "what you need"] [--json]',
-    "  aimoto apply --workspace <path> --proposal <id> --hash <digest> [--json]",
-    "  aimoto open [--workspace <path>] [--json]",
+    `${g}Start here:${r}`,
+    `  ${fBold}aimoto init${r} ${f}"<name>" [--root <path>] [--json]${r}`,
+    `  ${fBold}aimoto request${r} ${f}"<ordinary need>" --workspace <path> [--json]${r}`,
+    `  ${fBold}aimoto doctor${r} ${f}[--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto inspect${r} ${f}[--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto module views${r} ${f}--module <id> [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto records list${r} ${f}--module <id> [--collection <id>] [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto habit create${r} ${f}--id <id> --name "<name>" [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto habit log${r} ${f}--habit <id> --entry <id> --date <YYYY-MM-DD> [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto agent habit plan${r} ${f}--workspace <path> [--request "what you need"] [--json]${r}`,
+    `  ${fBold}aimoto apply${r} ${f}--workspace <path> --proposal <id> --hash <digest> [--json]${r}`,
+    `  ${fBold}aimoto open${r} ${f}[--workspace <path>] [--json]${r}`,
     "",
-    "Commands:",
-    '  aimoto init "<name>" [--root <path>] [--json]  Alias for workspace create',
-    '  aimoto workspace create "<name>" [--root <path>] [--json]',
-    '  aimoto request "<ordinary need>" --workspace <path> [--json]',
-    "  aimoto inspect [--workspace <path>] [--json]",
-    "  aimoto module views --module <id> [--workspace <path>] [--json]",
-    "  aimoto records list --module <aimoto.files|aimoto.tasks|local.habit-tracker> [--collection <habit|habit-entry>] [--workspace <path>] [--json]",
-    '  aimoto habit create --id <id> --name "<name>" [--workspace <path>] [--json]',
-    "  aimoto habit log --habit <id> --entry <id> --date <YYYY-MM-DD> [--workspace <path>] [--json]",
-    "  aimoto snapshot create [--workspace <path>] [--json]",
-    "  aimoto snapshot list [--workspace <path>] [--json]",
-    "  aimoto snapshot inspect <snapshot-id> [--workspace <path>] [--json]",
-    "  aimoto snapshot restore-plan <snapshot-id> [--workspace <path>] [--json]",
-    "  aimoto snapshot restore-propose <snapshot-id> [--workspace <path>] [--json]",
-    '  aimoto agent habit plan --workspace <path> [--request "what you need"] [--json]',
-    "  aimoto plan --workspace <path> --set-authority <mode> [--json]",
-    "  aimoto apply --workspace <path> --proposal <id> --hash <digest> [--principal <id>] [--json]"
-    ,""
-    ,"Agent contract:"
-    ,"  Add --json for one versioned envelope on stdout. Never parse human output."
-    ,"  Planning changes nothing. Apply only after a human reviews the exact proposal and digest."
+    `${g}Commands:${r}`,
+    `  ${fBold}aimoto init${r} ${f}"<name>" [--root <path>] [--json]  ${dim}Alias for workspace create${r}`,
+    `  ${fBold}aimoto workspace create${r} ${f}"<name>" [--root <path>] [--json]${r}`,
+    `  ${fBold}aimoto request${r} ${f}"<ordinary need>" --workspace <path> [--json]${r}`,
+    `  ${fBold}aimoto inspect${r} ${f}[--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto module views${r} ${f}--module <id> [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto records list${r} ${f}--module <aimoto.files|aimoto.tasks|local.habit-tracker> [--collection <habit|habit-entry>] [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto habit create${r} ${f}--id <id> --name "<name>" [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto habit log${r} ${f}--habit <id> --entry <id> --date <YYYY-MM-DD> [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto snapshot create${r} ${f}[--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto snapshot list${r} ${f}[--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto snapshot inspect${r} ${f}<snapshot-id> [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto snapshot restore-plan${r} ${f}<snapshot-id> [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto snapshot restore-propose${r} ${f}<snapshot-id> [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto agent habit plan${r} ${f}--workspace <path> [--request "what you need"] [--json]${r}`,
+    `  ${fBold}aimoto plan${r} ${f}--workspace <path> --set-authority <mode> [--json]${r}`,
+    `  ${fBold}aimoto apply${r} ${f}--workspace <path> --proposal <id> --hash <digest> [--principal <id>] [--json]${r}`,
+    "",
+    `${g}Agent contract:${r}`,
+    `  ${dim}Add --json for one versioned envelope on stdout. Never parse human output.${r}`,
+    `  ${dim}Planning changes nothing. Apply only after a human reviews the exact proposal and digest.${r}`
   ].join("\n");
 }
 
@@ -307,21 +465,103 @@ export function desktopExecutableCandidates(
     Boolean(candidate) && values.indexOf(candidate) === index);
 }
 
-function renderHabitTrackerPlan(result: { request: string; proposal: { proposalId: string; changeSetDigest: string; changeSet: ChangeSet } }): string {
+export async function findWorkspaceDirectory(startDir: string): Promise<string | undefined> {
+  let current = resolve(startDir);
+  while (true) {
+    try {
+      await access(join(current, ".aimoto", "workspace.json"));
+      return current;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+  return undefined;
+}
+
+export async function resolveWorkspacePath(
+  cwd: string,
+  requestedWorkspace?: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  fallbackToDefault: boolean = false
+): Promise<string> {
+  if (requestedWorkspace) {
+    return (await resolveRegisteredWorkspace(requestedWorkspace, environment)) ?? resolve(cwd, requestedWorkspace);
+  }
+  if (environment.AIMOTO_WORKSPACE) {
+    return resolve(cwd, environment.AIMOTO_WORKSPACE);
+  }
+  const found = await findWorkspaceDirectory(cwd);
+  if (found) {
+    return found;
+  }
+  const registered = await resolveRegisteredWorkspace("default", environment);
+  if (registered) return registered;
+  if (fallbackToDefault) {
+    return environment.LOCALAPPDATA
+      ? resolve(environment.LOCALAPPDATA, "AI-Mo-To", "workspaces", "default")
+      : resolve(homedir(), ".aimoto", "workspaces", "default");
+  }
+  return resolve(cwd, ".");
+}
+
+export async function ensureWorkspaceResolved(
+  engine: WorkspaceEngine,
+  root: string
+): Promise<string> {
+  try {
+    await engine.inspectWorkspace(root);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "WorkspaceNotFound") {
+      await engine.createWorkspace({ root, name: "Default Workspace", workspaceId: "default" });
+    } else {
+      throw error;
+    }
+  }
+  return root;
+}
+
+function renderOutcomePlan(
+  result: { request: string; workspaceRoot?: string; plan: { displayName: string; userOutcomes: string[] }; proposal: { proposalId: string; changeSetDigest: string; changeSet: ChangeSet } },
+  color: boolean = supportsColor()
+): string {
   const operation = result.proposal.changeSet.operations[0];
+  const wsFlag = result.workspaceRoot ? ` --workspace ${result.workspaceRoot}` : "";
+  const applyCommand = `aimoto apply${wsFlag} --proposal ${result.proposal.proposalId} --hash ${result.proposal.changeSetDigest}`;
+  const outcomesText = result.plan.userOutcomes.join("; ");
+
+  if (!color) {
+    return [
+      `${result.plan.displayName} is ready for your review.`,
+      `Request: ${result.request}`,
+      `It will add: ${outcomesText}.`,
+      `It requests: ${(operation?.effects ?? []).map((effect) => effect.replace("capability.request:", "")).join(", ") || "no extra capabilities"}.`,
+      `Proposal: ${result.proposal.proposalId}`,
+      `Exact digest: ${result.proposal.changeSetDigest}`,
+      `Approve it with: ${applyCommand}`,
+    ].join("\n");
+  }
+
+  const g = ANSI.goldBold;
+  const f = ANSI.forestGreen;
+  const fBold = ANSI.forestGreenBold;
+  const r = ANSI.reset;
+
   return [
-    "Habit Tracker is ready for your review.",
-    `Request: ${result.request}`,
-    "It will add: habits, daily check-ins, and completion history.",
-    `It requests: ${(operation?.effects ?? []).map((effect) => effect.replace("capability.request:", "")).join(", ") || "no extra capabilities"}.`,
-    `Proposal: ${result.proposal.proposalId}`,
-    `Exact digest: ${result.proposal.changeSetDigest}`,
-    "Approve it with: aimoto apply --workspace <path> --proposal <id> --hash <digest>",
+    `${g}${result.plan.displayName} is ready for your review.${r}`,
+    `Request: ${f}${result.request}${r}`,
+    `It will add: ${outcomesText}.`,
+    `It requests: ${fBold}${(operation?.effects ?? []).map((effect) => effect.replace("capability.request:", "")).join(", ") || "no extra capabilities"}.${r}`,
+    `Proposal: ${f}${result.proposal.proposalId}${r}`,
+    `Exact digest: ${g}${result.proposal.changeSetDigest}${r}`,
+    `Approve it with: ${fBold}${applyCommand}${r}`,
   ].join("\n");
 }
 
 type OutcomeRequestResult = {
   request: string;
+  workspaceRoot?: string;
   understoodAs: string;
   explanation: string;
   changesApplied: false;
@@ -344,58 +584,179 @@ type OutcomeRequestResult = {
   };
 };
 
-function supportsHabitOutcome(request: string): boolean {
+function classifyOutcomeCategory(request: string): "habit" | "task" | "research" | "custom" {
   const normalized = request.toLowerCase();
-  return [
-    /\bhabit(s)?\b/,
-    /\bdaily (routine|practice|check[- ]?in)s?\b/,
-    /\btrack\b.*\b(meditat|exercise|workout|water|reading|read|sleep|streak)/,
-    /\b(meditat|exercise|workout|reading|read)\b.*\b(every day|daily|regularly|progress|completion)/,
-  ].some((pattern) => pattern.test(normalized));
+  if (
+    /\bhabit(s)?\b/.test(normalized) ||
+    /\bdaily (routine|practice|check[- ]?in)s?\b/.test(normalized) ||
+    /\btrack\b.*\b(meditat|exercise|workout|water|reading|read|sleep|streak)/.test(normalized) ||
+    /\b(meditat|exercise|workout|reading|read)\b.*\b(every day|daily|regularly|progress|completion)/.test(normalized)
+  ) {
+    return "habit";
+  }
+  if (
+    /\b(task|tasks|todo|todos|action item|action items|project board|assign|assignment|ticket|tickets)\b/.test(normalized) ||
+    /\bmanage\b.*\b(task|todo|project)/.test(normalized)
+  ) {
+    return "task";
+  }
+  if (
+    /\b(research|paper|excerpt|reading note|study|paper summary|bookmark|sources|literature)\b/.test(normalized) ||
+    /\b(collect|save|read)\b.*\b(research|paper|note|study)/.test(normalized)
+  ) {
+    return "research";
+  }
+  return "custom";
 }
 
-async function createHabitOutcomeProposal(
+async function createOutcomeProposal(
   engine: WorkspaceEngine,
   root: string,
-  request: string
+  request: string,
+  workspaceRoot?: string,
+  agentProvider?: AgentProvider
 ): Promise<OutcomeRequestResult> {
   if (!request.trim()) {
     throw new EngineError("InvalidInput", "request requires an ordinary-language need.");
   }
-  if (!supportsHabitOutcome(request)) {
-    throw new EngineError(
-      "InvalidInput",
-      "AI-Mo-To understood the request, but this build cannot safely fulfill it. Its current outcome-level support is a daily Habit Tracker.",
-      {
-        request,
-        supportedOutcomes: ["Track habits or recurring daily practices and review completion history."],
-        changesApplied: false,
-      }
-    );
+  let workspace: WorkspaceInspection;
+  try {
+    workspace = await engine.inspectWorkspace(root);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "WorkspaceNotFound") {
+      const folderName = workspaceRoot ? workspaceRoot.split(/[\\/]/).pop() || "Workspace" : "Default Workspace";
+      workspace = await engine.createWorkspace({ root, name: folderName, workspaceId: folderName.toLowerCase().replace(/[^a-z0-9]+/g, "-") });
+    } else {
+      throw error;
+    }
   }
-  const workspace = await engine.inspectWorkspace(root);
-  const foundry = createHabitTrackerFoundry(resolve(root, ".aimoto", "foundry", "staging"));
+  const category = classifyOutcomeCategory(request);
+  if (agentProvider) {
+    const appId = `app-${randomUUID()}`;
+    const app = await allocateAgentAppRepository(resolve(root, ".aimoto"), appId, request, DEFAULT_AGENT_GUIDE);
+    let retainAgentRepository = false;
+    try {
+      const result = await agentProvider.run({ repositoryRoot: app.root, promptFile: app.promptFile });
+      if (result.exitCode !== 0) {
+        throw new EngineError("ValidationFailed", `Agent provider '${agentProvider.name}' failed while building the app.`, { app, result });
+      }
+    let manifest: {
+      moduleId?: string;
+      version?: string;
+      requestedCapabilities?: string[];
+      views?: Array<{ id?: string; kind?: string; declaration?: string }>;
+    };
+    try { manifest = JSON.parse(await readFile(join(app.root, "module.json"), "utf8")); }
+    catch {
+      throw new EngineError(
+        "ValidationFailed",
+        "Agent must produce a valid module.json manifest in the generated app repository.",
+        { app, provider: { name: agentProvider.name, output: result.output?.slice(-4_000) } }
+      );
+    }
+    if (!manifest.moduleId || !manifest.version) throw new EngineError("ValidationFailed", "module.json must include moduleId and version.", { app });
+    const manifestValidation = validateProtocol("module-manifest", manifest);
+    if (!manifestValidation.valid) {
+      throw new EngineError("ValidationFailed", "The generated module manifest does not satisfy the AI-Mo-To module contract.", { app, diagnostics: manifestValidation.errors });
+    }
+    const appViews = (manifest.views ?? []).filter(view => view.kind === "app");
+    if (appViews.length === 0) {
+      throw new EngineError("ValidationFailed", "The generated application must expose at least one runnable app view.", { app });
+    }
+    for (const view of appViews) {
+      if (!view.declaration) {
+        throw new EngineError("ValidationFailed", `Generated app view ${view.id ?? "unknown"} has no declaration.`, { app });
+      }
+      const declarationPath = resolve(app.root, view.declaration);
+      if (!declarationPath.startsWith(`${app.root}\\`) && !declarationPath.startsWith(`${app.root}/`)) {
+        throw new EngineError("ValidationFailed", "A generated app view declaration escaped its repository.", { app });
+      }
+      const declaration = JSON.parse(await readFile(declarationPath, "utf8")) as { kind?: unknown; entry?: unknown };
+      if (declaration.kind !== "app" || typeof declaration.entry !== "string") {
+        throw new EngineError("ValidationFailed", `Generated app view ${view.id ?? "unknown"} has no runnable entrypoint.`, { app });
+      }
+      const entryPath = resolve(app.root, declaration.entry);
+      if (
+        extname(entryPath).toLowerCase() !== ".html" ||
+        (!entryPath.startsWith(`${app.root}\\`) && !entryPath.startsWith(`${app.root}/`))
+      ) {
+        throw new EngineError("ValidationFailed", `Generated app view ${view.id ?? "unknown"} has an invalid HTML entrypoint.`, { app });
+      }
+      const html = await readFile(entryPath, "utf8");
+      if (!/<(?:button|input|select|textarea|form)\b/i.test(html) || !/<script\b/i.test(html)) {
+        throw new EngineError("ValidationFailed", `Generated app view ${view.id ?? "unknown"} is not interactive.`, { app });
+      }
+      if (!/\b(?:localStorage|indexedDB)\b/.test(html)) {
+        throw new EngineError("ValidationFailed", `Generated app view ${view.id ?? "unknown"} does not persist user state.`, { app });
+      }
+    }
+    const digest = await digestStagedModule(app.root);
+    if (!(await verifyStagedModule(app.root, digest))) throw new EngineError("ValidationFailed", "Generated module content digest could not be verified.", { app });
+    const requestedCapabilities = manifest.requestedCapabilities?.length ? manifest.requestedCapabilities : ["app.generated.install"];
+    const plan = { requestId: appId, moduleId: manifest.moduleId, displayName: manifest.moduleId, userOutcomes: [request], records: [], views: [], commands: [], events: [], requestedCapabilities };
+    const stagedModule = { moduleId: manifest.moduleId, version: manifest.version, digest, directory: app.root };
+    const changeSet = proposalToModuleInstallChangeSet({ kind: "install-generated", requestId: appId, plan, module: stagedModule, requestedCapabilities: plan.requestedCapabilities, checks: { staticValidation: { ok: true, diagnostics: [] }, dryActivation: { ok: true, diagnostics: [] } } }, { workspaceId: workspace.workspaceId, baseRevision: workspace.revision, changeSetId: randomUUID(), operationId: `install-${manifest.moduleId}`, createdAt: new Date().toISOString() });
+    // The generated repository may propose the workspace's navigation/home
+    // surface. It is still reviewed and digest-bound as part of this ChangeSet.
+    let generatedLayout: { homeView?: unknown; views?: unknown } | undefined;
+    try {
+      const workspaceSpec = JSON.parse(await readFile(join(app.root, "aimoto.workspace.json"), "utf8")) as { layout?: { homeView?: unknown; views?: unknown } };
+      generatedLayout = workspaceSpec.layout;
+    } catch {
+      // The host default layout remains valid when the agent does not provide
+      // a custom workspace surface.
+    }
+    if (generatedLayout) changeSet.operations[0]!.input.workspaceLayout = generatedLayout;
+      const proposal = await engine.createProposal({ root, changeSet, proposalId: randomUUID() });
+      retainAgentRepository = true;
+      return { request, ...(workspaceRoot ? { workspaceRoot } : {}), understoodAs: `Build ${manifest.moduleId}`, explanation: "Agent-built module is ready for review. Nothing has been installed.", changesApplied: false, approvalRequired: true, plan, stagedModule, proposal, next: { action: "review", commandTemplate: `aimoto apply --proposal ${proposal.proposalId} --hash ${proposal.changeSetDigest}` } };
+    } finally {
+      // Only a digest-bound proposal owns a generated repository. Provider,
+      // schema, runtime, or persistence failures leave no unexplained debris.
+      if (!retainAgentRepository) await rm(app.root, { recursive: true, force: true });
+    }
+  }
+  const stagingRoot = resolve(root, ".aimoto", "foundry", "staging");
+
+  let foundry;
+  let plan;
   const requestId = randomUUID();
-  const plan = createHabitTrackerPlan(requestId);
+
+  if (category === "habit") {
+    foundry = createHabitTrackerFoundry(stagingRoot);
+    plan = createHabitTrackerPlan(requestId);
+  } else if (category === "task") {
+    foundry = createTaskManagerFoundry(stagingRoot);
+    plan = createTaskManagerPlan(requestId);
+  } else if (category === "research") {
+    foundry = createResearchCollectorFoundry(stagingRoot);
+    plan = createResearchCollectorPlan(requestId);
+  } else {
+    foundry = createDynamicTrackerFoundry(stagingRoot, request);
+    plan = createDynamicTrackerPlan(requestId, request);
+  }
+
   const staged = await foundry.stage({ requestId, workspaceId: workspace.workspaceId, text: request }, plan);
   if (!staged.ok) {
-    throw new EngineError("ValidationFailed", "Habit Tracker staging did not pass local checks.", { diagnostics: staged.diagnostics });
+    throw new EngineError("ValidationFailed", `${plan.displayName} staging did not pass local checks.`, { diagnostics: staged.diagnostics });
   }
   if (staged.proposal.kind !== "install-generated") {
-    throw new EngineError("ValidationFailed", "Habit Tracker must be a locally generated module.");
+    throw new EngineError("ValidationFailed", `${plan.displayName} must be a locally generated module.`);
   }
   const changeSet = proposalToModuleInstallChangeSet(staged.proposal, {
     workspaceId: workspace.workspaceId,
     baseRevision: workspace.revision,
     changeSetId: randomUUID(),
-    operationId: "install-habit-tracker",
+    operationId: `install-${plan.moduleId.replace(/^local\./, "")}`,
     createdAt: new Date().toISOString(),
   });
   const proposal = await engine.createProposal({ root, changeSet, proposalId: randomUUID() });
+  const wsFlag = workspaceRoot ? ` --workspace ${workspaceRoot}` : "";
   return {
     request,
-    understoodAs: "Track habits or recurring daily practices.",
-    explanation: "AI-Mo-To prepared a Habit Tracker with habits, daily check-ins, and completion history. Nothing has been installed.",
+    ...(workspaceRoot ? { workspaceRoot } : {}),
+    understoodAs: `Create and manage ${plan.displayName}`,
+    explanation: `AI-Mo-To prepared ${plan.displayName} with ${plan.records.map((r) => r.name).join(", ")}. Nothing has been installed.`,
     changesApplied: false,
     approvalRequired: true,
     plan: staged.proposal.plan,
@@ -403,7 +764,7 @@ async function createHabitOutcomeProposal(
     proposal,
     next: {
       action: "review",
-      commandTemplate: "aimoto apply --workspace <path> --proposal <id> --hash <digest>",
+      commandTemplate: `aimoto apply${wsFlag} --proposal ${proposal.proposalId} --hash ${proposal.changeSetDigest}`,
     },
   };
 }
@@ -425,12 +786,12 @@ export async function runCli(
       ? JSON.stringify(envelope("help", traceId, {
           data: {
             summary: "Turn a plain-language need into a local, inspectable, human-approved workspace.",
-            usage: usage(),
+            usage: usage(false, false),
             jsonEnvelopeVersion: JSON_ENVELOPE_VERSION,
             approvalRule: "Review the exact proposal and digest before apply."
           }
         }))
-      : usage());
+      : usage(supportsColor(), true));
     return 0;
   }
 
@@ -446,7 +807,9 @@ export async function runCli(
         );
       }
       const root = resolve(cwd, option(args, "--root") ?? name.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
-      result = await engine.createWorkspace({ root, name });
+      const createdWorkspace = await engine.createWorkspace({ root, name });
+      result = createdWorkspace;
+      await registerWorkspace({ id: createdWorkspace.workspaceId, name: createdWorkspace.name, root: createdWorkspace.root, updatedAt: new Date().toISOString() }, environment);
     } else if (args[0] === "doctor") {
       command = "doctor";
       const platform = dependencies.platform ?? process.platform;
@@ -486,35 +849,39 @@ export async function runCli(
       };
     } else if (args[0] === "inspect") {
       command = "inspect";
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
       result = await engine.inspectWorkspace(root);
     } else if (args[0] === "module" && args[1] === "views") {
       command = "module.views";
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
       const moduleId = option(args, "--module");
       if (!moduleId) throw new EngineError("InvalidInput", "module views requires --module.");
       result = await engine.listInstalledModuleViews(root, moduleId);
     } else if (args[0] === "records" && args[1] === "list") {
       command = "records.list";
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
       const moduleId = option(args, "--module");
       if (moduleId === "aimoto.files" || moduleId === "aimoto.tasks") {
         if (option(args, "--collection")) {
-          throw new EngineError("InvalidInput", "--collection is only used with local.habit-tracker.");
+          throw new EngineError("InvalidInput", "--collection is only used with custom modules.");
         }
         result = await engine.listBuiltInRecords(root, moduleId);
-      } else if (moduleId === "local.habit-tracker") {
+      } else if (moduleId) {
         const collectionId = option(args, "--collection");
-        if (collectionId !== "habit" && collectionId !== "habit-entry") {
-          throw new EngineError("InvalidInput", "Habit Tracker records require --collection habit or --collection habit-entry.");
+        if (!collectionId) {
+          throw new EngineError("InvalidInput", `records list for ${moduleId} requires --collection.`);
         }
-        result = await engine.listHabitTrackerRecords(root, collectionId);
+        result = await engine.listInstalledModuleRecords(root, moduleId, collectionId);
       } else {
         throw new EngineError("InvalidInput", "records list requires a supported --module.");
       }
     } else if (args[0] === "habit" && args[1] === "create") {
       command = "habit.create";
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
       const habitId = option(args, "--id");
       const name = option(args, "--name");
       if (!habitId || !name) throw new EngineError("InvalidInput", "habit create requires --id and --name.");
@@ -523,7 +890,8 @@ export async function runCli(
       });
     } else if (args[0] === "habit" && args[1] === "log") {
       command = "habit.log";
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
       const habitId = option(args, "--habit");
       const entryId = option(args, "--entry");
       const completedOn = option(args, "--date");
@@ -534,7 +902,8 @@ export async function runCli(
         root, command: "log-completion", input: { habitId, entryId, completedOn }
       });
     } else if (args[0] === "snapshot") {
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
       const action = args[1];
       command = `snapshot.${action ?? "unknown"}`;
       if (action === "create") result = await engine.createSnapshot(root);
@@ -554,19 +923,31 @@ export async function runCli(
       if (!request || request.startsWith("--")) {
         throw new EngineError("InvalidInput", 'request requires a need, for example: aimoto request "Help me track meditation every day" --workspace <path>');
       }
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
-      result = await createHabitOutcomeProposal(engine, root, request);
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment, true);
+      const agentMode = args.includes("--agent");
+      result = await createOutcomeProposal(engine, root, request, requestedWorkspace,
+        agentMode ? (dependencies.agentProvider ?? createCodexCliProvider({ env: environment })) : undefined);
     } else if (args[0] === "agent" && args[1] === "habit" && args[2] === "plan") {
       command = "agent.habit.plan";
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment, true);
       const request = option(args, "--request") ?? "Add a Habit Tracker";
-      result = await createHabitOutcomeProposal(engine, root, request);
+      result = await createOutcomeProposal(engine, root, request, requestedWorkspace);
     } else if (args[0] === "plan") {
       command = "plan";
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
       const authorityMode = option(args, "--set-authority");
       if (!authorityMode) {
         throw new EngineError("InvalidInput", "plan requires --set-authority for this v0.1 slice.");
+      }
+      const validModes = ["observe", "suggest", "assist", "execute", "build"];
+      if (!validModes.includes(authorityMode)) {
+        throw new EngineError(
+          "InvalidInput",
+          `Invalid authority mode "${authorityMode}". Supported modes: ${validModes.join(", ")}.`
+        );
       }
       const workspace = await engine.inspectWorkspace(root);
       const changeSet: ChangeSet = {
@@ -591,7 +972,8 @@ export async function runCli(
       });
     } else if (args[0] === "apply") {
       command = "apply";
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
       const proposalId = option(args, "--proposal");
       const changeSetDigest = option(args, "--hash");
       if (!proposalId || !changeSetDigest) {
@@ -599,7 +981,7 @@ export async function runCli(
       }
       const proposal = engine.getProposal(root, proposalId);
       const principal = option(args, "--principal");
-      result = await engine.approveProposal({
+      const approved = await engine.approveProposal({
         root,
         approval: {
           schemaVersion: SCHEMA_VERSION,
@@ -612,18 +994,27 @@ export async function runCli(
           ...(principal ? { approvedBy: principal } : {})
         }
       });
+      result = approved;
     } else if (args[0] === "open") {
       command = "open";
-      const root = resolve(cwd, option(args, "--workspace") ?? ".");
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment, true);
       const workspace = await engine.inspectWorkspace(root);
       const opened = await (dependencies.openDesktop ?? ((workspaceRoot) =>
         defaultOpenDesktop(workspaceRoot, environment, dependencies.runtimeExecutable)))(workspace.root);
       result = { ...opened, workspace };
+    } else if (args[0] === "shortcut" && args[1] === "create") {
+      command = "shortcut.create";
+      const requestedWorkspace = option(args, "--workspace");
+      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment, true);
+      const workspace = await engine.inspectWorkspace(root);
+      const shortcutPath = await createDesktopShortcut(workspace.name, workspace.root);
+      result = { workspace, shortcutPath };
     } else {
       if (args.length === 0 || args[0] === "help" || args[0] === "--help") {
         io.stdout(wantsJson
-          ? JSON.stringify(envelope("help", traceId, { data: { usage: usage(), jsonEnvelopeVersion: JSON_ENVELOPE_VERSION } }))
-          : usage());
+          ? JSON.stringify(envelope("help", traceId, { data: { usage: usage(false, false), jsonEnvelopeVersion: JSON_ENVELOPE_VERSION } }))
+          : usage(supportsColor(), true));
         return 0;
       }
       throw new EngineError(
@@ -632,11 +1023,12 @@ export async function runCli(
       );
     }
 
+    const requestedWorkspace = option(args, "--workspace");
     io.stdout(
       wantsJson
         ? JSON.stringify(envelope(command, traceId, { data: result }))
         : command === "agent.habit.plan" || command === "request"
-          ? renderHabitTrackerPlan(result as { request: string; proposal: { proposalId: string; changeSetDigest: string; changeSet: ChangeSet } })
+          ? renderOutcomePlan(result as { request: string; workspaceRoot?: string; plan: { displayName: string; userOutcomes: string[] }; proposal: { proposalId: string; changeSetDigest: string; changeSet: ChangeSet } })
         : command === "doctor"
           ? (result as { healthy: boolean; checks: DoctorCheck[]; next: string }).checks
               .flatMap((check) => [
@@ -647,8 +1039,10 @@ export async function runCli(
               .join("\n")
         : command === "open"
           ? `Opened AI-Mo-To Desktop for ${(result as { workspace: WorkspaceInspection }).workspace.name}.`
-        : "workspaceId" in (result as object)
-          ? renderInspection(result as WorkspaceInspection)
+        : isWorkspaceInspection(result)
+          ? renderInspection(result)
+        : isProposal(result)
+          ? renderProposal(result, requestedWorkspace)
           : JSON.stringify(result, null, 2)
     );
     if (command === "doctor" && !(result as { healthy: boolean }).healthy) {

@@ -58,6 +58,13 @@ export async function verifyStagedModule(
   return digestBundle(files) === expectedDigest;
 }
 
+/** Computes the canonical digest for a materialized module directory. */
+export async function digestStagedModule(directory: string): Promise<`sha256:${string}`> {
+  const files: BundleFile[] = [];
+  await collectStagedFiles(directory, "", files);
+  return digestBundle(files);
+}
+
 async function collectStagedFiles(
   directory: string,
   relativeDirectory: string,

@@ -10,7 +10,7 @@ import { exposeDesktopApi } from "../src/preload.js";
 
 describe("desktop shell", () => {
   it("renders Files and Tasks even before a workspace is selected", () => {
-    expect(screenFor().views.map((view) => view.id)).toEqual(["files", "tasks"]);
+    expect(screenFor().views.map((view) => view.id)).toEqual(["files", "tasks", "research"]);
     expect(screenFor().views[1]?.actions?.[0]?.label).toBe("Try an example");
   });
 
@@ -39,6 +39,14 @@ describe("desktop shell", () => {
     );
     expect(preload).toContain('require("electron")');
     expect(preload).toContain('contextBridge.exposeInMainWorld("aimoto"');
+  });
+
+  it("packages the renderer stylesheet beside renderer.html", async () => {
+    const html = await readFile(fileURLToPath(new URL("../src/renderer.html", import.meta.url)), "utf8");
+    const copyScript = await readFile(fileURLToPath(new URL("../scripts/copy-assets.mjs", import.meta.url)), "utf8");
+    expect(html).toContain('href="./tokens.css"');
+    expect(copyScript).toContain('const tokensDestination = resolve(appRoot, "dist", "tokens.css")');
+    expect(copyScript).toContain("await cp(tokensSource, tokensDestination)");
   });
 
   it("uses one deterministic product-owned default workspace", async () => {
@@ -176,7 +184,7 @@ describe("desktop shell", () => {
       { root: "C:/default" } as never
     );
     expect(handle.mock.calls.map(([channel]) => channel)).toEqual([
-      "workspace:default", "workspace:inspect", "workspace:select", "records:list", "records:execute",
+      "workspace:default", "workspace:inspect", "workspace:select", "workspace:request", "workspace:apply", "records:list", "records:execute",
       "module:views", "habits:list", "habits:execute"
     ]);
   });

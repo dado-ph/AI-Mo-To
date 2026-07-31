@@ -1,6 +1,6 @@
 ---
 name: aimoto-operate
-description: Turn an ordinary-language need into a local, human-controlled AI-Mo-To workspace through the installed aimoto CLI. Use when a user asks to track, organize, remember, manage, or build a small personal workflow or local tool, including habit trackers, task lists, and file organizers, even when the user does not name AI-Mo-To.
+description: Turn an ordinary-language need into a local, human-controlled AI-Mo-To workspace through the installed aimoto CLI. Use when a user asks to build any local workflow or application, even when the user does not name AI-Mo-To.
 ---
 
 # Operate AI-Mo-To
@@ -17,14 +17,18 @@ must knowingly approve the exact proposal before it is applied.
    discoverable and give the concrete diagnostic; do not substitute a hosted
    app builder or silently implement a different product.
 2. Translate the user's desired outcome into a short workspace name and a
-   focused request. Use a user-selected folder when supplied; otherwise create
-   a clearly named child folder in the current working directory. Never write
-   into an existing non-workspace folder without explaining the choice.
+   focused request. Use a user-selected folder when explicitly supplied; otherwise
+   target a named workspace inside the product default workspaces directory
+   (`$env:LOCALAPPDATA\AI-Mo-To\workspaces\<workspace-name>` on Windows or
+   `~/.aimoto/workspaces/<workspace-name>`). Never create workspace folders inside
+   the current working directory or source repositories without explicit user instruction.
 3. Create or inspect the workspace using the CLI's current machine-readable
    contract. Prefer `--json`, check success/error envelopes, and use returned
    values rather than guessing identifiers or digests.
-4. Ask AI-Mo-To to plan the smallest tool that satisfies the outcome. For a
-   daily-habit request, discover and use the installed habit-planning command.
+4. Ask AI-Mo-To to plan the smallest tool that satisfies the outcome. Requests
+   may be novel: provide the Foundry guide and an isolated generated-app
+   repository to the configured coding agent instead of classifying the request
+   into a fixed product type.
 5. Present the proposal in ordinary language: what will be installed or
    changed, which local workspace it affects, and that applying it advances
    trusted workspace state. Include the exact proposal identity and digest in

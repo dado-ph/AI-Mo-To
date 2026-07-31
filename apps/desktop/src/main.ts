@@ -2,6 +2,7 @@ import type { WorkspaceInspection } from "@ai-mo-to/engine";
 import { WorkspaceEngine } from "@ai-mo-to/engine";
 import { runCli } from "@ai-mo-to/cli";
 import { createRequire } from "node:module";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DesktopApi } from "./contracts.js";
@@ -47,6 +48,30 @@ export function workspaceRootFromArgs(args: readonly string[]): string | undefin
   return root;
 }
 
+/** Resolve a workspace ID/name from the product-owned registry before treating
+ * the argument as a filesystem path. */
+export async function resolveWorkspaceLaunchTarget(value: string, userDataPath: string): Promise<string> {
+  // Electron's userData is normally Roaming on Windows, while AI-Mo-To's
+  // canonical workspace store is LocalAppData. Keep registry lookup aligned
+  // with the CLI rather than silently treating an ID as a literal path.
+  const storageRoot = process.env.LOCALAPPDATA
+    ? join(process.env.LOCALAPPDATA, "AI-Mo-To")
+    : userDataPath;
+  const registryPath = join(storageRoot, "workspaces", "registry.json");
+  try {
+    const registry = JSON.parse(await readFile(registryPath, "utf8")) as { workspaces?: Array<{ id: string; name: string; root: string }> };
+    const normalized = value.toLowerCase();
+    const match = (registry.workspaces ?? []).find(entry => entry.id.toLowerCase() === normalized || entry.name.toLowerCase() === normalized);
+    if (match) {
+      await access(join(match.root, ".aimoto", "workspace.json"));
+      return match.root;
+    }
+  } catch {
+    // A literal path remains a supported advanced override.
+  }
+  return value;
+}
+
 /** Opens the stable first-run workspace, creating it only when it does not yet exist. */
 export async function openOrCreateDefaultWorkspace(engine: WorkspaceCreator, userDataPath: string): Promise<WorkspaceInspection> {
   const root = defaultWorkspaceRoot(userDataPath);
@@ -67,11 +92,41 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
       throw new Error("selectWorkspace must be provided by the Electron main process.");
     },
     inspectWorkspace: (root) => engine.inspectWorkspace(root),
-    listRecords: (root, moduleId) => engine.listBuiltInRecords(root, moduleId) as ReturnType<DesktopApi["listRecords"]>,
-    executeCommand: (input) => engine.executeBuiltInCommand(input) as ReturnType<DesktopApi["executeCommand"]>
-    ,listModuleViews: (root, moduleId) => engine.listInstalledModuleViews(root, moduleId) as ReturnType<DesktopApi["listModuleViews"]>
-    ,listHabitRecords: (root, collectionId) => engine.listHabitTrackerRecords(root, collectionId) as ReturnType<DesktopApi["listHabitRecords"]>
-    ,executeHabitCommand: (input) => engine.executeHabitTrackerCommand(input) as ReturnType<DesktopApi["executeHabitCommand"]>
+    listRecords: (root, moduleId) =>
+      (moduleId === "aimoto.research"
+        ? Promise.resolve([])
+        : engine.listBuiltInRecords(root, moduleId)) as ReturnType<DesktopApi["listRecords"]>,
+    executeCommand: (input) =>
+      (input.moduleId === "aimoto.research"
+        ? Promise.reject(new Error("Research command not supported"))
+        : engine.executeBuiltInCommand(input as Parameters<typeof engine.executeBuiltInCommand>[0])) as ReturnType<DesktopApi["executeCommand"]>,
+    listModuleViews: (root, moduleId) => engine.listInstalledModuleViews(root, moduleId) as ReturnType<DesktopApi["listModuleViews"]>,
+    listHabitRecords: (root, collectionId) => engine.listHabitTrackerRecords(root, collectionId) as ReturnType<DesktopApi["listHabitRecords"]>,
+    executeHabitCommand: (input) => engine.executeHabitTrackerCommand(input) as ReturnType<DesktopApi["executeHabitCommand"]>,
+    requestOutcome: async (root, request) => {
+      let stdout = "";
+      const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
+      await runCli(["request", request, "--workspace", root, "--json"], io);
+      const envelope = JSON.parse(stdout);
+      if (!envelope.ok) throw new Error(envelope.error?.message ?? "Request failed");
+      return {
+        request,
+        plan: {
+          displayName: envelope.data.plan.displayName,
+          userOutcomes: envelope.data.plan.userOutcomes
+        },
+        proposal: {
+          proposalId: envelope.data.proposal.proposalId,
+          changeSetDigest: envelope.data.proposal.changeSetDigest
+        }
+      };
+    },
+    applyProposal: async (root, proposalId, digest) => {
+      let stdout = "";
+      const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
+      await runCli(["apply", "--workspace", root, "--proposal", proposalId, "--hash", digest, "--json"], io);
+      return engine.inspectWorkspace(root);
+    }
   };
 }
 
@@ -88,6 +143,34 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
     const result = await runtime.dialog.showOpenDialog({ properties: ["openDirectory"] });
     const root = result.filePaths[0];
     return result.canceled || !root ? undefined : engine.inspectWorkspace(root);
+  });
+  runtime.ipcMain.handle("workspace:request", async (_event: unknown, root: unknown, request: unknown) => {
+    if (typeof root !== "string" || typeof request !== "string") throw new Error("workspace root and request must be strings");
+    let stdout = "";
+    const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
+    await runCli(["request", request, "--workspace", root, "--json"], io);
+    const envelope = JSON.parse(stdout);
+    if (!envelope.ok) throw new Error(envelope.error?.message ?? "Request failed");
+    return {
+      request,
+      plan: {
+        displayName: envelope.data.plan.displayName,
+        userOutcomes: envelope.data.plan.userOutcomes
+      },
+      proposal: {
+        proposalId: envelope.data.proposal.proposalId,
+        changeSetDigest: envelope.data.proposal.changeSetDigest
+      }
+    };
+  });
+  runtime.ipcMain.handle("workspace:apply", async (_event: unknown, root: unknown, proposalId: unknown, digest: unknown) => {
+    if (typeof root !== "string" || typeof proposalId !== "string" || typeof digest !== "string") {
+      throw new Error("workspace root, proposalId, and digest must be strings");
+    }
+    let stdout = "";
+    const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
+    await runCli(["apply", "--workspace", root, "--proposal", proposalId, "--hash", digest, "--json"], io);
+    return engine.inspectWorkspace(root);
   });
   runtime.ipcMain.handle("records:list", async (_event: unknown, root: unknown, moduleId: unknown) => {
     if (typeof root !== "string") throw new Error("workspace root must be a string");
@@ -180,7 +263,10 @@ export async function launchDesktop(): Promise<void> {
   configurePackagedResources(runtime.app.isPackaged, resourcesPath);
   const engine = new WorkspaceEngine();
   await runtime.app.whenReady();
-  const requestedRoot = process.env.AIMOTO_LAUNCH_WORKSPACE ?? workspaceRootFromArgs(process.argv);
+  const requestedValue = process.env.AIMOTO_LAUNCH_WORKSPACE ?? workspaceRootFromArgs(process.argv);
+  const requestedRoot = requestedValue
+    ? await resolveWorkspaceLaunchTarget(requestedValue, runtime.app.getPath("userData"))
+    : undefined;
   const initialWorkspace = requestedRoot
     ? await engine.inspectWorkspace(requestedRoot)
     : await openOrCreateDefaultWorkspace(engine, runtime.app.getPath("userData"));
