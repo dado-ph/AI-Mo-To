@@ -4,319 +4,384 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" />
-  <title>AI-Mo-To Workspace</title>
+  <title>AI-Mo-To</title>
   <link rel="stylesheet" href="./tokens.css" />
   <style>
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: var(--background);
-      color: var(--foreground);
+      background: #08090c;
+      color: #f3f5f7;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       overflow: hidden;
       height: 100vh;
+      width: 100vw;
     }
     button, input { font: inherit; color: inherit; }
-    
-    .shell {
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      height: 100vh;
-    }
 
-    /* Top Navigation Header */
-    .header {
-      align-items: center;
-      background: var(--card);
-      border-bottom: 1px solid var(--border);
+    /* Ultra-Empty Landing Screen */
+    .landing-screen {
       display: flex;
-      height: 52px;
-      padding: 0 var(--aimoto-space-md);
-      gap: var(--aimoto-space-md);
-    }
-
-    .brand {
+      flex-direction: column;
       align-items: center;
-      display: flex;
-      gap: var(--aimoto-space-xs);
-      font-weight: 700;
-      font-size: 0.95rem;
-    }
-
-    .brand-logo {
-      align-items: center;
-      background: linear-gradient(135deg, var(--primary), #30a971);
-      border-radius: var(--radius);
-      color: #062016;
-      display: flex;
-      font-size: 0.85rem;
-      font-weight: 900;
-      height: 26px;
       justify-content: center;
-      width: 26px;
+      height: 100vh;
+      width: 100vw;
+      text-align: center;
+      padding: 24px;
+      position: relative;
     }
 
-    .workspace-btn {
-      align-items: center;
-      background: var(--secondary);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      cursor: pointer;
+    .landing-title {
+      font-size: 3.8rem;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      margin: 0 0 8px 0;
+      background: linear-gradient(135deg, #ffffff 40%, #71d7a5 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .landing-subtitle {
+      color: #8e9baa;
+      font-size: 1.1rem;
+      font-weight: 400;
+      margin: 0 0 32px 0;
+    }
+
+    .landing-actions {
       display: flex;
-      gap: var(--aimoto-space-xs);
-      padding: var(--aimoto-space-2xs) var(--aimoto-space-sm);
-      font-size: 0.82rem;
-      transition: background 0.15s ease;
-    }
-    .workspace-btn:hover { background: var(--aimoto-raised-hover); }
-
-    .header-actions {
-      display: flex;
-      gap: var(--aimoto-space-xs);
-      margin-left: auto;
+      gap: 12px;
       align-items: center;
     }
 
-    .btn {
+    .pill-btn {
       align-items: center;
-      background: var(--primary);
-      color: var(--primary-foreground);
-      border: 0;
-      border-radius: var(--radius);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      color: #f3f5f7;
       cursor: pointer;
       display: inline-flex;
+      font-size: 0.9rem;
       font-weight: 600;
-      font-size: 0.82rem;
-      gap: var(--aimoto-space-xs);
-      padding: 6px var(--aimoto-space-md);
-      transition: opacity 0.15s ease;
+      gap: 8px;
+      padding: 10px 24px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      backdrop-filter: blur(12px);
     }
-    .btn:hover { opacity: 0.9; }
-
-    .btn-secondary {
-      background: var(--secondary);
-      color: var(--secondary-foreground);
-      border: 1px solid var(--border);
+    .pill-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.25);
+      transform: translateY(-1px);
     }
-    .btn-secondary:hover { background: var(--aimoto-raised-hover); }
+    .pill-btn-primary {
+      background: #71d7a5;
+      color: #062016;
+      border: none;
+    }
+    .pill-btn-primary:hover {
+      background: #88ebd0;
+      box-shadow: 0 4px 20px rgba(113, 215, 165, 0.35);
+    }
 
-    /* Main Grid Layout */
-    .main-body {
-      display: grid;
-      grid-template-columns: 240px 1fr;
+    /* Really Big Workspace Carousel (Clean Wireframe Blocks) */
+    .carousel-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      width: 100vw;
+      padding: 40px;
+      box-sizing: border-box;
+    }
+
+    .carousel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .carousel-header h2 {
+      font-size: 1.6rem;
+      font-weight: 800;
+      margin: 0;
+      letter-spacing: -0.02em;
+    }
+
+    .carousel-track {
+      display: flex;
+      gap: 24px;
+      overflow-x: auto;
+      padding-bottom: 24px;
+      flex: 1;
+      align-items: center;
+      scrollbar-width: thin;
+    }
+
+    .workspace-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      cursor: pointer;
+      flex: 0 0 380px;
+      height: 75%;
+      min-height: 340px;
+      padding: 32px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      backdrop-filter: blur(16px);
+      position: relative;
+    }
+    .workspace-card:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(113, 215, 165, 0.4);
+      transform: translateY(-6px) scale(1.02);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    .card-mark {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #71d7a5, #30a971);
+      color: #062016;
+      font-size: 1.4rem;
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .card-title { font-size: 1.4rem; font-weight: 800; margin: 0 0 6px 0; }
+    .card-path { color: #8e9baa; font-size: 0.85rem; word-break: break-all; margin: 0; }
+
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-top: 16px;
+      margin-top: auto;
+    }
+    .card-badge {
+      font-size: 0.78rem;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(113, 215, 165, 0.12);
+      color: #9aebc2;
+      border: 1px solid rgba(113, 215, 165, 0.25);
+    }
+
+    /* Fullscreen Workspace View */
+    .fullscreen-workspace {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      width: 100vw;
+      background: #08090c;
+    }
+    .fs-bar {
+      height: 52px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      gap: 16px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .fs-content {
+      flex: 1;
+      padding: 32px;
+      overflow: auto;
+    }
+
+    /* Guide Popup Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-card {
+      background: #111419;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 20px;
+      width: 560px;
+      max-width: 90vw;
+      max-height: 80vh;
+      overflow: auto;
+      padding: 32px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8);
+    }
+    .modal-card h2 { font-size: 1.5rem; margin-top: 0; }
+    .modal-card p { color: #9ba6b5; line-height: 1.6; }
+
+    /* Floating Overlay Pill Terminal Drawer */
+    .terminal-pill-overlay {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 480px;
+      max-width: 92vw;
+      background: #0b0d11;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 999px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.75);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 500;
       overflow: hidden;
     }
 
-    /* Sidebar Navigation */
-    .sidebar {
-      background: var(--card);
-      border-right: 1px solid var(--border);
+    /* Expanded Hover State */
+    .terminal-pill-overlay:hover,
+    .terminal-pill-overlay:focus-within {
+      width: 680px;
+      border-radius: 16px;
+    }
+
+    /* Maximized State (Bottom Half Screen) */
+    .terminal-pill-overlay.maximized {
+      bottom: 0;
+      left: 0;
+      right: 0;
+      transform: none;
+      width: 100vw;
+      height: 50vh;
+      max-width: 100vw;
+      border-radius: 20px 20px 0 0;
+      border-bottom: none;
+    }
+
+    .pill-header {
       display: flex;
-      flex-direction: column;
-      padding: var(--aimoto-space-sm);
-      gap: var(--aimoto-space-2xs);
-    }
-
-    .nav-label {
-      color: var(--aimoto-subtle);
-      font-size: 0.7rem;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      margin: var(--aimoto-space-sm) var(--aimoto-space-xs) var(--aimoto-space-2xs);
-      text-transform: uppercase;
-    }
-
-    .module-nav { display: flex; flex-direction: column; gap: var(--aimoto-space-2xs); }
-
-    .nav-item {
       align-items: center;
-      background: transparent;
-      border: 0;
-      border-radius: var(--radius);
-      color: var(--aimoto-muted);
+      padding: 8px 16px;
+      gap: 10px;
       cursor: pointer;
-      display: flex;
-      gap: var(--aimoto-space-xs);
-      padding: 8px var(--aimoto-space-sm);
-      font-size: 0.85rem;
-      text-align: left;
-      width: 100%;
-      transition: all 0.15s ease;
+      user-select: none;
     }
-    .nav-item:hover { background: var(--aimoto-raised-hover); color: var(--foreground); }
-    .nav-item.active { background: var(--accent); color: var(--accent-foreground); font-weight: 600; }
-
-    .sidebar-foot {
-      margin-top: auto;
-      border-top: 1px solid var(--border);
-      padding-top: var(--aimoto-space-sm);
-    }
-
-    .authority-badge {
-      align-items: center;
-      display: inline-flex;
-      font-size: 0.78rem;
-      gap: var(--aimoto-space-xs);
-      padding: var(--aimoto-space-2xs) var(--aimoto-space-xs);
-      border-radius: 999px;
-      background: var(--accent);
-      color: var(--accent-foreground);
-      border: 1px solid var(--border);
-    }
-    .authority-dot {
-      background: var(--primary);
+    .pill-dot {
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
-      height: 7px;
-      width: 7px;
+      background: #71d7a5;
+      box-shadow: 0 0 8px #71d7a5;
     }
-
-    /* Content Area */
-    .content {
-      display: flex;
-      flex-direction: column;
-      overflow: auto;
-      padding: var(--aimoto-space-lg);
-      gap: var(--aimoto-space-md);
-    }
-
-    .content-head h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.02em; }
-    .content-head p { color: var(--aimoto-muted); font-size: 0.85rem; margin: var(--aimoto-space-2xs) 0 0; }
-
-    .views-grid {
-      display: grid;
-      gap: var(--aimoto-space-md);
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    }
-
-    .view-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: var(--aimoto-space-md);
-      box-shadow: var(--aimoto-shadow-sm);
-    }
-    .view-card h2 { font-size: 0.95rem; margin: 0 0 var(--aimoto-space-xs); }
-    .view-card p { color: var(--aimoto-muted); font-size: 0.82rem; margin: 0; }
-
-    .app-frame {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      height: calc(100vh - 220px);
-      min-height: 480px;
-      width: 100%;
-    }
-
-    /* Bottom Interactive Terminal Drawer */
-    .terminal-drawer {
-      background: #090b0e;
-      border-top: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      height: 220px;
-      transition: height 0.2s ease;
-    }
-    .terminal-drawer.collapsed {
-      height: 36px;
-    }
-
-    .terminal-bar {
-      align-items: center;
-      background: var(--card);
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      height: 36px;
-      padding: 0 var(--aimoto-space-md);
-      gap: var(--aimoto-space-sm);
-    }
-    .terminal-title {
-      font-size: 0.78rem;
+    .pill-title {
+      font-size: 0.82rem;
       font-weight: 700;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      color: var(--aimoto-muted);
+      color: #d1d8e0;
+      letter-spacing: 0.04em;
     }
-    .terminal-toggle {
+    .pill-controls {
+      margin-left: auto;
+      display: flex;
+      gap: 6px;
+    }
+    .pill-ctrl-btn {
       background: transparent;
       border: 0;
-      color: var(--aimoto-muted);
+      color: #8e9baa;
       cursor: pointer;
-      font-size: 0.8rem;
-      margin-left: auto;
-      padding: 2px var(--aimoto-space-xs);
+      font-size: 0.85rem;
+      padding: 2px 6px;
+      border-radius: 4px;
     }
-    .terminal-toggle:hover { color: var(--foreground); }
+    .pill-ctrl-btn:hover { color: #ffffff; background: rgba(255, 255, 255, 0.1); }
 
-    .terminal-view {
-      color: #f3f5f7;
-      flex: 1;
+    .pill-body {
+      display: none;
+      height: 180px;
+      padding: 12px 16px;
       font-family: "Cascadia Mono", Consolas, monospace;
       font-size: 0.82rem;
-      line-height: 1.5;
-      overflow: auto;
-      padding: var(--aimoto-space-xs) var(--aimoto-space-md);
+      color: #71d7a5;
+      overflow-y: auto;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
       white-space: pre-wrap;
     }
-    .term-line { margin: 0; }
-    .term-prompt { color: var(--primary); font-weight: 700; }
+    .terminal-pill-overlay:hover .pill-body,
+    .terminal-pill-overlay:focus-within .pill-body,
+    .terminal-pill-overlay.maximized .pill-body {
+      display: block;
+    }
+    .terminal-pill-overlay.maximized .pill-body {
+      height: calc(50vh - 44px);
+    }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <!-- Top Header -->
-    <header class="header">
-      <div class="brand">
-        <span class="brand-logo" aria-hidden="true">A</span>
-        <span>AI-Mo-To</span>
-      </div>
-      <button id="open-workspace" class="workspace-btn" type="button">
-        <span id="workspace-name">Default Workspace</span>
-        <span style="color:var(--aimoto-muted)">⌄</span>
-      </button>
-      <div class="header-actions">
-        <button id="refresh" class="btn btn-secondary" type="button">↻ Refresh</button>
-        <button id="request-outcome" class="btn" type="button">+ Request Outcome</button>
-      </div>
-    </header>
 
-    <!-- Main Navigation Body -->
-    <div class="main-body">
-      <aside class="sidebar">
-        <div class="nav-label">Workspace Modules</div>
-        <nav id="module-nav" class="module-nav">
-          <button class="nav-item active" data-filter="all" type="button">⌂ Overview</button>
-          <button class="nav-item" data-filter="files" type="button">□ Files</button>
-          <button class="nav-item" data-filter="tasks" type="button">✓ Tasks</button>
-        </nav>
-        <div class="sidebar-foot">
-          <div class="authority-badge">
-            <span class="authority-dot"></span>
-            <span id="authority-label">Observe mode</span>
-          </div>
-        </div>
-      </aside>
-
-      <main class="content">
-        <div class="content-head">
-          <h1 id="page-heading">Workspace Overview</h1>
-          <p id="status" role="status">Opening local workspace…</p>
-        </div>
-        <section id="views" class="views-grid"></section>
-      </main>
+  <!-- Landing Screen (No Active Workspace) -->
+  <div id="landing-screen" class="landing-screen">
+    <h1 class="landing-title">AI-Mo-To</h1>
+    <p class="landing-subtitle">Create your new workspace</p>
+    <div class="landing-actions">
+      <button id="btn-create-workspace" class="pill-btn pill-btn-primary" type="button">+ Create Workspace</button>
+      <button id="btn-select-workspace" class="pill-btn" type="button">Open Existing</button>
+      <button id="btn-open-guide" class="pill-btn" type="button">📖 Guide</button>
     </div>
-
-    <!-- Bottom Interactive PTY Terminal Drawer -->
-    <aside id="terminal-drawer" class="terminal-drawer">
-      <div class="terminal-bar">
-        <span class="authority-dot"></span>
-        <span class="terminal-title">Terminal Console (PTY)</span>
-        <button id="terminal-toggle" class="terminal-toggle" type="button" title="Toggle Terminal Drawer">▼ Minimize</button>
-      </div>
-      <div id="terminal-view" class="terminal-view" role="log">
-        <p class="term-line"><span class="term-prompt">AI-Mo-To Interactive PTY Terminal initialized.</span> Rooted in workspace folder.</p>
-      </div>
-    </aside>
   </div>
+
+  <!-- Big Workspace Carousel -->
+  <div id="carousel-screen" class="carousel-container" hidden>
+    <div class="carousel-header">
+      <h2>Workspaces</h2>
+      <button id="carousel-add-btn" class="pill-btn pill-btn-primary" type="button">+ New Workspace</button>
+    </div>
+    <div id="carousel-track" class="carousel-track"></div>
+  </div>
+
+  <!-- Fullscreen Workspace View -->
+  <div id="fullscreen-workspace" class="fullscreen-workspace" hidden>
+    <header class="fs-bar">
+      <button id="fs-back-btn" class="pill-btn" type="button">← Carousel</button>
+      <strong id="fs-title" style="font-size: 1.1rem">My Workspace</strong>
+      <span id="fs-authority" class="card-badge" style="margin-left: auto">Observe mode</span>
+    </header>
+    <main id="fs-content" class="fs-content">
+      <h2 id="fs-heading">Workspace Overview</h2>
+      <div id="fs-views-grid" style="display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));"></div>
+    </main>
+  </div>
+
+  <!-- Popup Guide Manual Modal -->
+  <div id="guide-modal" class="modal-backdrop" hidden>
+    <div class="modal-card">
+      <h2>📖 AI-Mo-To Manual</h2>
+      <p><strong>3-Tier Boundary Architecture:</strong></p>
+      <p>1. <strong>Tier 1 (Core Host)</strong>: Immutable engine and shell.<br>
+         2. <strong>Tier 2 (Staging Lab)</strong>: AI writes generated mini-apps.<br>
+         3. <strong>Tier 3 (User Workspace)</strong>: Your files (<code>.md</code>, <code>.pdf</code>, <code>.csv</code>) stay local and human-readable in <code>Documents/AI-Mo-To/Workspaces/</code>.</p>
+      <div style="text-align: right; margin-top: 24px;">
+        <button id="guide-close-btn" class="pill-btn pill-btn-primary" type="button">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Overlay Pill Terminal Drawer -->
+  <aside id="terminal-pill" class="terminal-pill-overlay">
+    <div id="pill-header" class="pill-header">
+      <span class="pill-dot"></span>
+      <span class="pill-title">&gt;_ Terminal (PTY)</span>
+      <div class="pill-controls">
+        <button id="btn-term-max" class="pill-ctrl-btn" type="button" title="Maximize">▲</button>
+        <button id="btn-term-min" class="pill-ctrl-btn" type="button" title="Minimize">▼</button>
+      </div>
+    </div>
+    <div id="pill-body" class="pill-body">
+      <p style="margin: 0; color: #8e9baa;">AI-Mo-To Interactive PTY Terminal initialized.</p>
+    </div>
+  </aside>
+
   <script type="module" src="./renderer.js"></script>
 </body>
 </html>

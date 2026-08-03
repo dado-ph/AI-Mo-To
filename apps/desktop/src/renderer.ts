@@ -14,7 +14,9 @@ function screenFor(workspace?: NonNullable<DesktopScreen["workspace"]>): Desktop
   const badge = authorityBadge(workspace.authorityMode);
   return {
     workspace,
-    views: workspace.layout.views.map((entry) => ({ id: entry.id, title: entry.viewId, moduleId: entry.moduleId, viewId: entry.viewId, description: `View from ${entry.moduleId}`, emptyState: "No items yet." } as any)),
+    views: workspace.layout.views.map((entry) => ({
+      id: entry.id, title: entry.viewId, moduleId: entry.moduleId, viewId: entry.viewId, description: `View from ${entry.moduleId}`, emptyState: "No items yet."
+    } as any)),
     authority: {
       label: badge.label,
       tone: badge.tone
@@ -24,8 +26,7 @@ function screenFor(workspace?: NonNullable<DesktopScreen["workspace"]>): Desktop
 }
 
 export async function loadScreen(api: DesktopApi, workspace: NonNullable<DesktopScreen["workspace"]>): Promise<DesktopScreen> {
-  const generatedViews = (await Promise.all(workspace.modules.map((m) => api.listModuleViews(workspace.root, m.moduleId))))
-    .flat();
+  const generatedViews = (await Promise.all(workspace.modules.map((m) => api.listModuleViews(workspace.root, m.moduleId)))).flat();
   return { ...screenFor(workspace), generatedViews };
 }
 
@@ -46,127 +47,166 @@ function element<T extends Element>(selector: string): T {
 
 let activeTerminalSessionId: string | undefined;
 
-export function initTerminalBridge(api: DesktopApi, workspaceRoot?: string): void {
-  const drawer = element<HTMLElement>("#terminal-drawer");
-  const toggleBtn = element<HTMLElement>("#terminal-toggle");
-  const view = element<HTMLElement>("#terminal-view");
+export function initPillTerminalOverlay(api: DesktopApi, workspaceRoot?: string): void {
+  const pill = element<HTMLElement>("#terminal-pill");
+  const maxBtn = element<HTMLElement>("#btn-term-max");
+  const minBtn = element<HTMLElement>("#btn-term-min");
+  const pillBody = element<HTMLElement>("#pill-body");
 
-  toggleBtn.addEventListener("click", () => {
-    drawer.classList.toggle("collapsed");
-    toggleBtn.textContent = drawer.classList.contains("collapsed") ? "▲ Expand" : "▼ Minimize";
+  maxBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    pill.classList.add("maximized");
   });
 
-  if (workspaceRoot && !activeTerminalSessionId) {
-    api.createTerminal(workspaceRoot).then((res) => {
+  minBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    pill.classList.remove("maximized");
+  });
+
+  if (!activeTerminalSessionId) {
+    const rootPath = workspaceRoot || "default";
+    api.createTerminal(rootPath).then((res) => {
       activeTerminalSessionId = res.sessionId;
-      const line = document.createElement("p");
-      line.className = "term-line";
-      line.innerHTML = `<span class="term-prompt">PTY Session Active [${res.sessionId}]</span> Rooted in ${workspaceRoot}`;
-      view.append(line);
+      const p = document.createElement("p");
+      p.style.margin = "0 0 6px 0";
+      p.innerHTML = `<strong style="color:#71d7a5">&gt;_ PTY Active [${res.sessionId}]</strong> Rooted in ${rootPath}`;
+      pillBody.append(p);
     }).catch(() => {});
 
     api.onTerminalData((data) => {
       if (data.chunk) {
-        const line = document.createElement("span");
-        line.textContent = data.chunk;
-        view.append(line);
-        view.scrollTop = view.scrollHeight;
+        const span = document.createElement("span");
+        span.textContent = data.chunk;
+        pillBody.append(span);
+        pillBody.scrollTop = pillBody.scrollHeight;
       }
     });
   }
 }
 
-export function renderScreen(screen: DesktopScreen): void {
-  const status = element<HTMLElement>("#status");
-  const workspaceName = element<HTMLElement>("#workspace-name");
-  const authorityLabel = element<HTMLElement>("#authority-label");
-  const viewsContainer = element<HTMLElement>("#views");
-  const nav = element<HTMLElement>("#module-nav");
+export function renderScreen(screen: DesktopScreen, api: DesktopApi): void {
+  const landingScreen = element<HTMLElement>("#landing-screen");
+  const carouselScreen = element<HTMLElement>("#carousel-screen");
+  const track = element<HTMLElement>("#carousel-track");
+  const fsWorkspace = element<HTMLElement>("#fullscreen-workspace");
+  const fsTitle = element<HTMLElement>("#fs-title");
+  const fsAuthority = element<HTMLElement>("#fs-authority");
+  const fsGrid = element<HTMLElement>("#fs-views-grid");
 
-  viewsContainer.replaceChildren();
-  nav.replaceChildren();
+  if (!screen.workspace) {
+    landingScreen.hidden = false;
+    carouselScreen.hidden = true;
+    fsWorkspace.hidden = true;
+    return;
+  }
 
-  if (screen.workspace) {
-    workspaceName.textContent = screen.workspace.name;
-    status.textContent = `Revision ${screen.workspace.revision} · ${screen.workspace.modules.length} installed modules · Healthy`;
-    
-    const overview = document.createElement("button");
-    overview.className = "nav-item active";
-    overview.textContent = "⌂ Overview";
-    nav.append(overview);
+  // Workspaces exist -> Show Big Carousel
+  landingScreen.hidden = true;
+  carouselScreen.hidden = false;
+  fsWorkspace.hidden = true;
+
+  track.replaceChildren();
+
+  // Create Workspace Card for Carousel
+  const card = document.createElement("div");
+  card.className = "workspace-card";
+
+  const mark = document.createElement("div");
+  mark.className = "card-mark";
+  mark.textContent = screen.workspace.name.charAt(0).toUpperCase() || "W";
+
+  const title = document.createElement("h3");
+  title.className = "card-title";
+  title.textContent = screen.workspace.name;
+
+  const path = document.createElement("p");
+  path.className = "card-path";
+  path.textContent = screen.workspace.root;
+
+  const footer = document.createElement("div");
+  footer.className = "card-footer";
+
+  const badge = document.createElement("span");
+  badge.className = "card-badge";
+  badge.textContent = screen.authority?.label || "Observe mode";
+
+  const rev = document.createElement("span");
+  rev.style.color = "#8e9baa";
+  rev.style.fontSize = "0.82rem";
+  rev.textContent = `Rev ${screen.workspace.revision}`;
+
+  footer.append(badge, rev);
+  card.append(mark, title, path, footer);
+
+  // CLICKING CAROUSEL CARD GOES FULLSCREEN
+  card.addEventListener("click", () => {
+    carouselScreen.hidden = true;
+    fsWorkspace.hidden = false;
+    fsTitle.textContent = screen.workspace!.name;
+    fsAuthority.textContent = screen.authority?.label || "Observe mode";
+    fsGrid.replaceChildren();
 
     for (const view of screen.generatedViews) {
-      const button = document.createElement("button");
-      button.className = "nav-item";
-      button.dataset.moduleId = view.moduleId;
-      button.dataset.viewId = view.id;
-      button.textContent = `✓ ${view.title}`;
-      button.addEventListener("click", () => {
-        nav.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
-        button.classList.add("active");
-        element<HTMLElement>("#page-heading").textContent = view.title;
-        viewsContainer.replaceChildren();
-        viewsContainer.classList.toggle("app-active", view.kind === "app");
-        if (view.kind === "app" && view.entryUrl) {
-          const frame = document.createElement("iframe");
-          frame.className = "app-frame";
-          frame.title = view.title;
-          frame.src = view.entryUrl;
-          frame.setAttribute("sandbox", "allow-scripts allow-forms allow-modals allow-same-origin");
-          viewsContainer.append(frame);
-        } else {
-          const card = document.createElement("article");
-          card.className = "view-card";
-          const heading = document.createElement("h2");
-          heading.textContent = view.title;
-          const detail = document.createElement("p");
-          detail.textContent = `View from ${view.moduleId}`;
-          card.append(heading, detail);
-          viewsContainer.append(card);
-        }
-      });
-      nav.append(button);
+      const vCard = document.createElement("div");
+      vCard.style.background = "rgba(255, 255, 255, 0.04)";
+      vCard.style.border = "1px solid rgba(255, 255, 255, 0.08)";
+      vCard.style.borderRadius = "12px";
+      vCard.style.padding = "20px";
+
+      const h3 = document.createElement("h3");
+      h3.style.margin = "0 0 8px 0";
+      h3.textContent = view.title;
+
+      const p = document.createElement("p");
+      p.style.margin = "0";
+      p.style.color = "#8e9baa";
+      p.textContent = `Module: ${view.moduleId}`;
+
+      vCard.append(h3, p);
+      fsGrid.append(vCard);
     }
-  } else {
-    workspaceName.textContent = "AI-Mo-To";
-    status.textContent = "No workspace open.";
-  }
+  });
 
-  if (screen.authority) {
-    authorityLabel.textContent = screen.authority.label;
-  }
-
-  for (const view of screen.generatedViews) {
-    const card = document.createElement("article");
-    card.className = "view-card";
-
-    const h2 = document.createElement("h2");
-    h2.textContent = view.title;
-
-    const p = document.createElement("p");
-    p.textContent = `View from ${view.moduleId}`;
-
-    card.append(h2, p);
-    viewsContainer.append(card);
-  }
+  track.append(card);
 }
 
 if (typeof window !== "undefined") {
   const api = (window as unknown as { aimoto?: DesktopApi }).aimoto;
   const init = async () => {
-    const status = document.querySelector("#status");
-    if (!api) {
-      if (status) status.textContent = "Error: AI-Mo-To preload bridge is unavailable.";
-      return;
-    }
+    if (!api) return;
+
+    // Guide Modal Handlers
+    const guideModal = element<HTMLElement>("#guide-modal");
+    element<HTMLElement>("#btn-open-guide").addEventListener("click", () => { guideModal.hidden = false; });
+    element<HTMLElement>("#guide-close-btn").addEventListener("click", () => { guideModal.hidden = true; });
+
+    // Back to Carousel Button
+    element<HTMLElement>("#fs-back-btn").addEventListener("click", () => {
+      element<HTMLElement>("#fullscreen-workspace").hidden = true;
+      element<HTMLElement>("#carousel-screen").hidden = false;
+    });
+
+    // Workspace Open Handlers
+    element("#btn-select-workspace").addEventListener("click", async () => {
+      const s = await openWorkspace(api);
+      renderScreen(s, api);
+    });
+
+    element("#btn-create-workspace").addEventListener("click", async () => {
+      const s = await openDefaultWorkspace(api);
+      renderScreen(s, api);
+    });
+
     try {
       const screen = await openDefaultWorkspace(api);
-      renderScreen(screen);
-      initTerminalBridge(api, screen.workspace?.root);
-    } catch (error) {
-      if (status) status.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
+      renderScreen(screen, api);
+      initPillTerminalOverlay(api, screen.workspace?.root);
+    } catch {
+      renderScreen({ views: [], generatedViews: [] }, api);
+      initPillTerminalOverlay(api);
     }
   };
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else {
