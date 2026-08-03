@@ -1,18 +1,5 @@
-# ADR-0003: Capability protocol and causality
+# Capabilities and approval
 
-- Status: Accepted
-- Date: 2026-07-29
+The engine, not a module or agent, decides the workspace authority level and effective capabilities. Modules receive a limited context reference and make requests through engine-managed calls.
 
-## Decision
-
-The engine owns causality and authority state. A module receives only an opaque,
-channel-bound context reference and submits typed operations to brokers. The
-engine derives effects and reversibility, binds approval to the canonical
-ChangeSet hash, and enforces monotonic authority ceilings across child calls.
-
-## Consequences
-
-Modules cannot self-declare their effective authority. Stale revisions,
-precondition failures, and expanded effect sets require revalidation and a new
-approval.
-
+Each proposal is tied to a canonical ChangeSet digest and a base revision. If its effects expand, its checks fail, or the workspace revision changes, the proposal must be reviewed again.
