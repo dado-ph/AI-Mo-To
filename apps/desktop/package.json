@@ -1,6 +1,6 @@
 {
   "name": "@ai-mo-to/desktop",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "AI-Mo-To, a local-first desktop workspace application.",
   "author": "AI-Mo-To contributors",
@@ -51,6 +51,7 @@
   "build": {
     "appId": "dev.aimoto.desktop",
     "productName": "AI-Mo-To",
+    "icon": "build/icon.ico",
     "directories": {
       "output": "release"
     },

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/aimoto-banner.png" alt="AI-Mo-To — a friendly AI robot unicorn" width="760" />
+  <img src="docs/assets/aimoto-banner.png" alt="AI-Mo-To — a friendly AI robot unicorn" width="420" />
 </p>
 
 <p align="center">
