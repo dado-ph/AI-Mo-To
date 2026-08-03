@@ -19,6 +19,8 @@ const tokensDestination = resolve(appRoot, "dist", "tokens.css");
 const xtermCssSource = resolve(appRoot, "node_modules", "@xterm", "xterm", "css", "xterm.css");
 const xtermCssDestination = resolve(appRoot, "dist", "xterm.css");
 
+import { build } from "esbuild";
+
 await mkdir(dirname(destination), { recursive: true });
 await cp(source, destination);
 await cp(preloadSource, preloadDestination);
@@ -28,3 +30,10 @@ await mkdir(dirname(packagedModules), { recursive: true });
 await cp(builtInModules, packagedModules, { recursive: true });
 await mkdir(dirname(packagedAgentSkills), { recursive: true });
 await cp(agentSkills, packagedAgentSkills, { recursive: true });
+
+await build({
+  entryPoints: [resolve(appRoot, "src", "renderer.ts")],
+  bundle: true,
+  outfile: resolve(appRoot, "dist", "renderer.js"),
+  format: "esm"
+});
