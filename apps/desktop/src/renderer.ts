@@ -1,4 +1,6 @@
 import type { DesktopApi, DesktopScreen } from "./contracts.js";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 
 function authorityBadge(mode: string): { label: string; tone: "positive" | "neutral" | "caution" } {
   if (mode === "build") return { label: "Build mode", tone: "caution" };
@@ -46,62 +48,69 @@ function element<T extends Element>(selector: string): T {
 }
 
 let activeTerminalSessionId: string | undefined;
+let xtermInstance: Terminal | undefined;
+let fitAddonInstance: FitAddon | undefined;
 
 export function initPillTerminalOverlay(api: DesktopApi, workspaceRoot?: string): void {
   const pill = element<HTMLElement>("#terminal-pill");
   const maxBtn = element<HTMLElement>("#btn-term-max");
   const minBtn = element<HTMLElement>("#btn-term-min");
-  const pillBody = element<HTMLElement>("#pill-body");
-  const pillOutput = element<HTMLElement>("#pill-output");
-  const pillForm = element<HTMLFormElement>("#pill-form");
-  const pillInput = element<HTMLInputElement>("#pill-input");
+  const xtermContainer = element<HTMLElement>("#xterm-container");
+
+  if (!xtermInstance) {
+    fitAddonInstance = new FitAddon();
+    xtermInstance = new Terminal({
+      theme: {
+        background: "#0b0d11",
+        foreground: "#f3f5f7",
+        cursor: "#71d7a5",
+        selectionBackground: "rgba(113, 215, 165, 0.3)",
+        black: "#000000",
+        red: "#e5484d",
+        green: "#71d7a5",
+        yellow: "#f5d00e",
+        blue: "#3e63dd",
+        magenta: "#ab4aba",
+        cyan: "#12a594",
+        white: "#eeeeee"
+      },
+      fontSize: 13,
+      fontFamily: '"Cascadia Mono", Consolas, monospace',
+      cursorBlink: true
+    });
+    xtermInstance.loadAddon(fitAddonInstance);
+    xtermInstance.open(xtermContainer);
+    try { fitAddonInstance.fit(); } catch {}
+  }
 
   maxBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     pill.classList.add("maximized");
-    pillInput.focus();
+    setTimeout(() => { try { fitAddonInstance?.fit(); } catch {} }, 100);
+    xtermInstance?.focus();
   });
 
   minBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     pill.classList.remove("maximized");
-  });
-
-  pillBody.addEventListener("click", () => {
-    pillInput.focus();
-  });
-
-  pillForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const command = pillInput.value;
-    if (activeTerminalSessionId) {
-      const line = document.createElement("div");
-      line.style.color = "#71d7a5";
-      line.style.fontWeight = "bold";
-      line.textContent = `$ ${command}`;
-      pillOutput.append(line);
-      api.writeTerminal(activeTerminalSessionId, `${command}\r\n`);
-      pillInput.value = "";
-      pillBody.scrollTop = pillBody.scrollHeight;
-    }
+    setTimeout(() => { try { fitAddonInstance?.fit(); } catch {} }, 100);
   });
 
   if (!activeTerminalSessionId) {
     const rootPath = workspaceRoot || "default";
     api.createTerminal(rootPath).then((res) => {
       activeTerminalSessionId = res.sessionId;
-      const p = document.createElement("p");
-      p.style.margin = "0 0 6px 0";
-      p.innerHTML = `<strong style="color:#71d7a5">&gt;_ PTY Active [${res.sessionId}]</strong> Rooted in ${rootPath}`;
-      pillOutput.append(p);
     }).catch(() => {});
 
     api.onTerminalData((data) => {
-      if (data.chunk) {
-        const span = document.createElement("span");
-        span.textContent = data.chunk;
-        pillOutput.append(span);
-        pillBody.scrollTop = pillBody.scrollHeight;
+      if (data.chunk && xtermInstance) {
+        xtermInstance.write(data.chunk);
+      }
+    });
+
+    xtermInstance.onData((data) => {
+      if (activeTerminalSessionId) {
+        api.writeTerminal(activeTerminalSessionId, data);
       }
     });
   }

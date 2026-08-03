@@ -16,10 +16,14 @@ const packagedAgentSkills = resolve(appRoot, "resources", "agent-skills");
 const tokensSource = resolve(appRoot, "..", "..", "packages", "ui-primitives", "src", "tokens.css");
 const tokensDestination = resolve(appRoot, "dist", "tokens.css");
 
+const xtermCssSource = resolve(appRoot, "node_modules", "@xterm", "xterm", "css", "xterm.css");
+const xtermCssDestination = resolve(appRoot, "dist", "xterm.css");
+
 await mkdir(dirname(destination), { recursive: true });
 await cp(source, destination);
 await cp(preloadSource, preloadDestination);
 await cp(tokensSource, tokensDestination);
+try { await cp(xtermCssSource, xtermCssDestination); } catch {}
 await mkdir(dirname(packagedModules), { recursive: true });
 await cp(builtInModules, packagedModules, { recursive: true });
 await mkdir(dirname(packagedAgentSkills), { recursive: true });
