@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
-  "include": ["src/**/*.ts"],
+  "compilerOptions": { "rootDir": "src", "outDir": "dist", "jsx": "react-jsx" },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
   "references": [
     { "path": "../cli" },
     { "path": "../../packages/engine" },

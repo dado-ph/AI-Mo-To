@@ -26,11 +26,10 @@ interface WorkspaceCreator extends WorkspaceInspector {
 interface DesktopWorkspaceEngine extends WorkspaceInspector {
   listBuiltInRecords(root: string, moduleId: "aimoto.files" | "aimoto.tasks"): Promise<readonly unknown[]>;
   executeBuiltInCommand(input: {
-    root: string; moduleId: "aimoto.files" | "aimoto.tasks"; command: string; input: Record<string, unknown>;
+    root: string; moduleId: string; command: string; input: Record<string, unknown>;
   }): Promise<unknown>;
   listInstalledModuleViews(root: string, moduleId: string): Promise<readonly unknown[]>;
-  listHabitTrackerRecords(root: string, collectionId: "habit" | "habit-entry"): Promise<readonly unknown[]>;
-  executeHabitTrackerCommand(input: { root: string; command: "create-habit" | "log-completion"; input: Record<string, unknown> }): Promise<unknown>;
+  listInstalledModuleRecords(root: string, moduleId: string, collectionId: string): Promise<readonly unknown[]>;
 }
 
 /** A product-owned path, stable across launches and distinct from user-selected workspaces. */
@@ -92,17 +91,13 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
       throw new Error("selectWorkspace must be provided by the Electron main process.");
     },
     inspectWorkspace: (root) => engine.inspectWorkspace(root),
-    listRecords: (root, moduleId) =>
-      (moduleId === "aimoto.research"
-        ? Promise.resolve([])
-        : engine.listBuiltInRecords(root, moduleId)) as ReturnType<DesktopApi["listRecords"]>,
+    listRecords: (root, moduleId, collectionId) =>
+      (moduleId === "aimoto.files" || moduleId === "aimoto.tasks"
+        ? engine.listBuiltInRecords(root, moduleId as "aimoto.files" | "aimoto.tasks")
+        : engine.listInstalledModuleRecords(root, moduleId, collectionId ?? "items")) as ReturnType<DesktopApi["listRecords"]>,
     executeCommand: (input) =>
-      (input.moduleId === "aimoto.research"
-        ? Promise.reject(new Error("Research command not supported"))
-        : engine.executeBuiltInCommand(input as Parameters<typeof engine.executeBuiltInCommand>[0])) as ReturnType<DesktopApi["executeCommand"]>,
+      engine.executeBuiltInCommand(input as Parameters<typeof engine.executeBuiltInCommand>[0]) as ReturnType<DesktopApi["executeCommand"]>,
     listModuleViews: (root, moduleId) => engine.listInstalledModuleViews(root, moduleId) as ReturnType<DesktopApi["listModuleViews"]>,
-    listHabitRecords: (root, collectionId) => engine.listHabitTrackerRecords(root, collectionId) as ReturnType<DesktopApi["listHabitRecords"]>,
-    executeHabitCommand: (input) => engine.executeHabitTrackerCommand(input) as ReturnType<DesktopApi["executeHabitCommand"]>,
     requestOutcome: async (root, request) => {
       let stdout = "";
       const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
@@ -126,7 +121,11 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
       const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
       await runCli(["apply", "--workspace", root, "--proposal", proposalId, "--hash", digest, "--json"], io);
       return engine.inspectWorkspace(root);
-    }
+    },
+    createTerminal: async (root) => ({ sessionId: `term-stub-${root?.length ?? 0}` }),
+    writeTerminal: async () => {},
+    onTerminalData: () => {},
+    resizeTerminal: async () => {}
   };
 }
 
@@ -172,28 +171,86 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
     await runCli(["apply", "--workspace", root, "--proposal", proposalId, "--hash", digest, "--json"], io);
     return engine.inspectWorkspace(root);
   });
-  runtime.ipcMain.handle("records:list", async (_event: unknown, root: unknown, moduleId: unknown) => {
-    if (typeof root !== "string") throw new Error("workspace root must be a string");
-    if (moduleId !== "aimoto.files" && moduleId !== "aimoto.tasks") throw new Error("unknown built-in module");
-    return engine.listBuiltInRecords(root, moduleId);
+  runtime.ipcMain.handle("records:list", async (_event: unknown, root: unknown, moduleId: unknown, collectionId?: unknown) => {
+    if (typeof root !== "string" || typeof moduleId !== "string") throw new Error("workspace root and module id must be strings");
+    if (moduleId === "aimoto.files" || moduleId === "aimoto.tasks") {
+      return engine.listBuiltInRecords(root, moduleId);
+    }
+    return engine.listInstalledModuleRecords(root, moduleId, typeof collectionId === "string" ? collectionId : "items");
   });
   runtime.ipcMain.handle("records:execute", async (_event: unknown, input: unknown) => {
     if (!input || typeof input !== "object") throw new Error("command input must be an object");
     const command = input as Parameters<DesktopWorkspaceEngine["executeBuiltInCommand"]>[0];
-    if (command.moduleId !== "aimoto.files" && command.moduleId !== "aimoto.tasks") throw new Error("unknown built-in module");
     return engine.executeBuiltInCommand(command);
   });
   runtime.ipcMain.handle("module:views", async (_event: unknown, root: unknown, moduleId: unknown) => {
     if (typeof root !== "string" || typeof moduleId !== "string") throw new Error("workspace root and module id must be strings");
     return engine.listInstalledModuleViews(root, moduleId);
   });
-  runtime.ipcMain.handle("habits:list", async (_event: unknown, root: unknown, collectionId: unknown) => {
-    if (typeof root !== "string" || (collectionId !== "habit" && collectionId !== "habit-entry")) throw new Error("invalid Habit Tracker record request");
-    return engine.listHabitTrackerRecords(root, collectionId);
+
+  const activeTerminals = new Map<string, any>();
+  runtime.ipcMain.handle("terminal:create", async (event: any, root: unknown) => {
+    const cwd = typeof root === "string" && root.length > 0
+      ? root
+      : (process.env.USERPROFILE ?? process.cwd());
+    const sessionId = `term-${Math.random().toString(36).slice(2, 9)}`;
+    const shell = process.platform === "win32" ? "powershell.exe" : (process.env.SHELL || "bash");
+    const sender = event?.sender;
+    
+    try {
+      const pty = await import("node-pty");
+      const proc = pty.spawn(shell, [], {
+        name: "xterm-256color",
+        cols: 80,
+        rows: 24,
+        cwd,
+        env: process.env as Record<string, string>
+      });
+
+      proc.onData((data: string) => {
+        sender?.send?.("terminal:data", { sessionId, chunk: data });
+      });
+
+      activeTerminals.set(sessionId, { type: "pty", proc });
+      return { sessionId };
+    } catch {
+      const { spawn } = await import("node:child_process");
+      const proc = spawn(shell, process.platform === "win32" ? ["-NoLogo"] : [], {
+        cwd,
+        env: { ...process.env, TERM: "xterm-256color" },
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+      
+      proc.stdout.on("data", (chunk: Buffer) => {
+        sender?.send?.("terminal:data", { sessionId, chunk: chunk.toString("utf8") });
+      });
+      proc.stderr.on("data", (chunk: Buffer) => {
+        sender?.send?.("terminal:data", { sessionId, chunk: chunk.toString("utf8") });
+      });
+
+      activeTerminals.set(sessionId, { type: "pipe", proc });
+      return { sessionId };
+    }
   });
-  runtime.ipcMain.handle("habits:execute", async (_event: unknown, input: unknown) => {
-    if (!input || typeof input !== "object") throw new Error("command input must be an object");
-    return engine.executeHabitTrackerCommand(input as Parameters<DesktopWorkspaceEngine["executeHabitTrackerCommand"]>[0]);
+
+  runtime.ipcMain.handle("terminal:write", async (_event: unknown, sessionId: unknown, data: unknown) => {
+    if (typeof sessionId !== "string" || typeof data !== "string") return;
+    const target = activeTerminals.get(sessionId);
+    if (!target) return;
+    if (target.type === "pty") {
+      target.proc.write(data);
+    } else if (target.proc && target.proc.stdin && !target.proc.stdin.destroyed) {
+      target.proc.stdin.write(data);
+    }
+  });
+
+  runtime.ipcMain.handle("terminal:resize", async (_event: unknown, sessionId: unknown, cols: unknown, rows: unknown) => {
+    if (typeof sessionId !== "string") return { ok: true };
+    const target = activeTerminals.get(sessionId);
+    if (target && target.type === "pty" && typeof cols === "number" && typeof rows === "number") {
+      try { target.proc.resize(cols, rows); } catch {}
+    }
+    return { ok: true };
   });
 }
 
@@ -267,14 +324,16 @@ export async function launchDesktop(): Promise<void> {
   const requestedRoot = requestedValue
     ? await resolveWorkspaceLaunchTarget(requestedValue, runtime.app.getPath("userData"))
     : undefined;
+  // The desktop shell never invents a workspace. A workspace is opened only
+  // when the person explicitly selects one or launches with --workspace.
   const initialWorkspace = requestedRoot
     ? await engine.inspectWorkspace(requestedRoot)
-    : await openOrCreateDefaultWorkspace(engine, runtime.app.getPath("userData"));
+    : undefined;
   registerDesktopIpc(runtime, engine, initialWorkspace);
   // Sandboxed Electron preload scripts run as CommonJS regardless of the
   // package's ESM setting. Use a dedicated bridge artifact in packaged builds.
   const preload = fileURLToPath(new URL("./preload.cjs", import.meta.url));
-  const renderer = fileURLToPath(new URL("./renderer.html", import.meta.url));
+  const renderer = fileURLToPath(new URL("./src/renderer-shadcn.html", import.meta.url));
   await openDesktopWindow(runtime, { preload, renderer });
   runtime.app.on("activate", () => { void openDesktopWindow(runtime, { preload, renderer }); });
   runtime.app.on("window-all-closed", () => { if (process.platform !== "darwin") runtime.app.quit(); });

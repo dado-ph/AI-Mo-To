@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
-  "moduleId": "ai-mo-to.habit-tracker",
-  "name": "Habit Tracker",
+  "moduleId": "local.custom-tool",
+  "name": "Custom Tool",
   "version": "0.1.0",
   "trustTier": "local-generated",
   "handler": {
@@ -10,38 +10,37 @@
   },
   "collections": [
     {
-      "id": "habit-entry",
+      "id": "items",
       "schema": {
         "type": "object",
-        "required": ["habitId", "completedAt"]
+        "required": ["itemId", "name"]
       }
     }
   ],
   "views": [
     {
-      "id": "habit-list",
+      "id": "items-list",
       "kind": "list",
-      "collection": "habit-entry"
+      "collection": "items"
     },
     {
-      "id": "habit-form",
+      "id": "items-form",
       "kind": "form",
-      "collection": "habit-entry"
+      "collection": "items"
     }
   ],
   "commands": [
     {
-      "id": "log-habit"
+      "id": "create-item"
     }
   ],
   "events": [
     {
-      "id": "habit-logged"
+      "id": "item-created"
     }
   ],
   "capabilities": [
-    "data.habit-entry.write"
+    "data.items.write"
   ],
   "migrations": []
 }
-

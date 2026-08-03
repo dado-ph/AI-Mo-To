@@ -9,3 +9,7 @@ apps/desktop/release-installer/
 apps/desktop/release-package-check*/
 apps/desktop/release-*/
 apps/desktop/resources/
+apps/cli/scratch/
+**/scratch/
+.codex-audit/
+

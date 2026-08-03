@@ -3,11 +3,21 @@ import { createRequire } from "node:module";
 
 export interface ElectronBridge {
   contextBridge: { exposeInMainWorld(key: string, api: DesktopApi): void };
-  ipcRenderer: { invoke(channel: string, ...args: unknown[]): Promise<unknown> };
+  ipcRenderer: {
+    invoke(channel: string, ...args: unknown[]): Promise<unknown>;
+    on?(channel: string, listener: (_event: unknown, ...args: unknown[]) => void): void;
+  };
 }
 
 /** Exposes only typed, allow-listed operations; the renderer never receives Node/Electron globals. */
 export function exposeDesktopApi(bridge: ElectronBridge): void {
+  const terminalListeners: Array<(data: { sessionId: string; chunk: string }) => void> = [];
+  if (bridge.ipcRenderer.on) {
+    bridge.ipcRenderer.on("terminal:data", (_event, data) => {
+      for (const listener of terminalListeners) listener(data as { sessionId: string; chunk: string });
+    });
+  }
+
   const api: DesktopApi = {
     openDefaultWorkspace: () => bridge.ipcRenderer.invoke("workspace:default") as ReturnType<DesktopApi["openDefaultWorkspace"]>,
     selectWorkspace: () => bridge.ipcRenderer.invoke("workspace:select") as ReturnType<DesktopApi["selectWorkspace"]>,
@@ -15,10 +25,12 @@ export function exposeDesktopApi(bridge: ElectronBridge): void {
     listRecords: (root, moduleId) => bridge.ipcRenderer.invoke("records:list", root, moduleId) as ReturnType<DesktopApi["listRecords"]>,
     executeCommand: (input) => bridge.ipcRenderer.invoke("records:execute", input) as ReturnType<DesktopApi["executeCommand"]>,
     listModuleViews: (root, moduleId) => bridge.ipcRenderer.invoke("module:views", root, moduleId) as ReturnType<DesktopApi["listModuleViews"]>,
-    listHabitRecords: (root, collectionId) => bridge.ipcRenderer.invoke("habits:list", root, collectionId) as ReturnType<DesktopApi["listHabitRecords"]>,
-    executeHabitCommand: (input) => bridge.ipcRenderer.invoke("habits:execute", input) as ReturnType<DesktopApi["executeHabitCommand"]>,
     requestOutcome: (root, request) => bridge.ipcRenderer.invoke("workspace:request", root, request) as ReturnType<DesktopApi["requestOutcome"]>,
-    applyProposal: (root, proposalId, digest) => bridge.ipcRenderer.invoke("workspace:apply", root, proposalId, digest) as ReturnType<DesktopApi["applyProposal"]>
+    applyProposal: (root, proposalId, digest) => bridge.ipcRenderer.invoke("workspace:apply", root, proposalId, digest) as ReturnType<DesktopApi["applyProposal"]>,
+    createTerminal: (root) => bridge.ipcRenderer.invoke("terminal:create", root) as ReturnType<DesktopApi["createTerminal"]>,
+    writeTerminal: (sessionId, data) => bridge.ipcRenderer.invoke("terminal:write", sessionId, data) as ReturnType<DesktopApi["writeTerminal"]>,
+    onTerminalData: (listener) => { terminalListeners.push(listener); },
+    resizeTerminal: (sessionId, cols, rows) => bridge.ipcRenderer.invoke("terminal:resize", sessionId, cols, rows) as ReturnType<DesktopApi["resizeTerminal"]>
   };
   bridge.contextBridge.exposeInMainWorld("aimoto", api);
 }

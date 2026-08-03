@@ -21,13 +21,13 @@
   --aimoto-subtle: #6c788a;
 
   /* Brand & Accent Tokens */
-  --aimoto-accent: #71d7a5;
-  --aimoto-accent-soft: #173a2b;
-  --aimoto-accent-border: #245c43;
-  --aimoto-accent-text: #9aebc2;
+  --aimoto-accent: #6366f1;
+  --aimoto-accent-soft: rgba(99, 102, 241, 0.15);
+  --aimoto-accent-border: rgba(99, 102, 241, 0.35);
+  --aimoto-accent-text: #c7d2fe;
 
   /* Focus & Accessibility */
-  --aimoto-focus-ring: #71d7a5;
+  --aimoto-focus-ring: #818cf8;
   
   /* Status Tones */
   --aimoto-neutral-soft: #1d2229;
@@ -50,6 +50,28 @@
   --aimoto-radius-lg: 14px;
   --aimoto-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --aimoto-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  /* Shadcn-Compatible Primitive UI Tokens */
+  --background: var(--aimoto-bg);
+  --foreground: var(--aimoto-text);
+  --card: var(--aimoto-panel);
+  --card-foreground: var(--aimoto-text);
+  --popover: var(--aimoto-raised);
+  --popover-foreground: var(--aimoto-text);
+  --primary: var(--aimoto-accent);
+  --primary-foreground: #0c0e11;
+  --secondary: var(--aimoto-neutral-soft);
+  --secondary-foreground: var(--aimoto-neutral-text);
+  --muted: var(--aimoto-neutral-soft);
+  --muted-foreground: var(--aimoto-muted);
+  --accent: var(--aimoto-accent-soft);
+  --accent-foreground: var(--aimoto-accent-text);
+  --destructive: #e5484d;
+  --destructive-foreground: #ffffff;
+  --border: var(--aimoto-line);
+  --input: var(--aimoto-line);
+  --ring: var(--aimoto-focus-ring);
+  --radius: var(--aimoto-radius-md);
 }
 
 /* Global Focus Ring for Keyboard Operability (WCAG 2.4.7) */
@@ -61,3 +83,4 @@
 [hidden] {
   display: none !important;
 }
+

@@ -448,11 +448,11 @@ describe("aimoto CLI", () => {
     const proposal = JSON.parse(planned.stdout[0] ?? "").data;
     expect(proposal).toMatchObject({
       request: "I want to track meditation every day",
-      plan: { displayName: "Habit Tracker" },
-      stagedModule: { moduleId: "local.habit-tracker", digest: expect.stringMatching(/^sha256:/) },
+      plan: { displayName: "Track Meditation Every Day" },
+      stagedModule: { moduleId: "local.track-meditation-every-day", digest: expect.stringMatching(/^sha256:/) },
       proposal: { status: "pending", baseRevision: 0 },
     });
-    expect(proposal.plan.views).toEqual(expect.arrayContaining([{ id: "daily-check-in", kind: "form" }]));
+    expect(proposal.plan.views).toEqual(expect.arrayContaining([{ id: "tracks", kind: "list" }]));
 
     const rejected = capture();
     expect(await runCli([
@@ -467,10 +467,10 @@ describe("aimoto CLI", () => {
     ], applied.io, { cwd })).toBe(0);
     const installed = JSON.parse(applied.stdout[0] ?? "");
     expect(installed).toMatchObject({ data: { revision: 1 } });
-    expect(installed.data.modules.some((module: { moduleId: string }) => module.moduleId === "local.habit-tracker")).toBe(true);
+    expect(installed.data.modules.some((module: { moduleId: string }) => module.moduleId === "local.track-meditation-every-day")).toBe(true);
     expect(installed.data.modules).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        moduleId: "local.habit-tracker",
+        moduleId: "local.track-meditation-every-day",
         version: "0.1.0",
         digest: proposal.stagedModule.digest
       })
@@ -501,85 +501,43 @@ describe("aimoto CLI", () => {
     await runCli(["workspace", "create", "Human Habit Proof", "--root", "human-habits"], capture().io, { cwd });
     const output = capture();
     expect(await runCli(["agent", "habit", "plan", "--workspace", "human-habits"], output.io, { cwd })).toBe(0);
-    expect(output.stdout[0]).toContain("Habit Tracker is ready for your review.");
+    expect(output.stdout[0]).toContain("Add A Habit Tracker is ready for your review.");
     expect(output.stdout[0]).toContain("Exact digest:");
     expect(output.stdout[0]).toContain("Approve it with:");
   });
 
-  it("discovers installed Habit views and performs explicit record interactions with stable JSON", async () => {
+  it("discovers installed module views and lists module records with stable JSON", async () => {
     const cwd = await temporaryDirectory();
-    await runCli(["init", "Habit Records", "--root", "habit-records", "--json"], capture().io, { cwd });
+    await runCli(["init", "Module Records", "--root", "module-records", "--json"], capture().io, { cwd });
     const planned = capture();
     await runCli([
-      "request", "Help me track meditation every day", "--workspace", "habit-records", "--json",
+      "request", "Help me track meditation every day", "--workspace", "module-records", "--json",
     ], planned.io, { cwd });
     const proposal = JSON.parse(planned.stdout[0] ?? "").data.proposal;
     await runCli([
-      "apply", "--workspace", "habit-records", "--proposal", proposal.proposalId,
+      "apply", "--workspace", "module-records", "--proposal", proposal.proposalId,
       "--hash", proposal.changeSetDigest, "--json",
     ], capture().io, { cwd });
 
     const views = capture();
     expect(await runCli([
-      "module", "views", "--module", "local.habit-tracker",
-      "--workspace", "habit-records", "--json",
+      "module", "views", "--module", "local.track-meditation-every-day",
+      "--workspace", "module-records", "--json",
     ], views.io, { cwd })).toBe(0);
     expect(JSON.parse(views.stdout[0] ?? "")).toMatchObject({
       ok: true,
       command: "module.views",
       data: expect.arrayContaining([
-        expect.objectContaining({ moduleId: "local.habit-tracker", id: "daily-check-in", collection: "habit-entry" }),
+        expect.objectContaining({ moduleId: "local.track-meditation-every-day", id: "tracks", collection: "track" }),
       ]),
-    });
-
-    const created = capture();
-    expect(await runCli([
-      "habit", "create", "--id", "meditation", "--name", "Meditation",
-      "--workspace", "habit-records", "--json",
-    ], created.io, { cwd })).toBe(0);
-    expect(JSON.parse(created.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "habit.create",
-      data: {
-        moduleId: "local.habit-tracker",
-        collectionId: "habit",
-        recordId: "meditation",
-        version: 1,
-        data: { habitId: "meditation", name: "Meditation" },
-      },
-    });
-
-    const logged = capture();
-    expect(await runCli([
-      "habit", "log", "--habit", "meditation", "--entry", "meditation-2026-07-29",
-      "--date", "2026-07-29", "--workspace", "habit-records", "--json",
-    ], logged.io, { cwd })).toBe(0);
-    expect(JSON.parse(logged.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "habit.log",
-      data: {
-        collectionId: "habit-entry",
-        recordId: "meditation-2026-07-29",
-        data: { habitId: "meditation", completedOn: "2026-07-29" },
-      },
     });
 
     const listed = capture();
     expect(await runCli([
-      "records", "list", "--module", "local.habit-tracker", "--collection", "habit-entry",
-      "--workspace", "habit-records", "--json",
+      "records", "list", "--module", "local.track-meditation-every-day", "--collection", "track",
+      "--workspace", "module-records", "--json",
     ], listed.io, { cwd })).toBe(0);
     expect(JSON.parse(listed.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "records.list",
-      data: [expect.objectContaining({ recordId: "meditation-2026-07-29" })],
-    });
-
-    const builtIns = capture();
-    expect(await runCli([
-      "records", "list", "--module", "aimoto.tasks", "--workspace", "habit-records", "--json",
-    ], builtIns.io, { cwd })).toBe(0);
-    expect(JSON.parse(builtIns.stdout[0] ?? "")).toMatchObject({
       ok: true,
       command: "records.list",
       data: [],
@@ -598,11 +556,11 @@ describe("aimoto CLI", () => {
       ok: true,
       command: "request",
       data: {
-        understoodAs: expect.stringContaining("Habit Tracker"),
+        understoodAs: expect.stringContaining("Track Meditation Every Day"),
         changesApplied: false,
         approvalRequired: true,
         explanation: expect.stringContaining("Nothing has been installed"),
-        plan: { displayName: "Habit Tracker" },
+        plan: { displayName: "Track Meditation Every Day" },
         proposal: { status: "pending", baseRevision: 0 },
         next: { action: "review", commandTemplate: expect.stringContaining("aimoto apply") },
       },
@@ -611,7 +569,7 @@ describe("aimoto CLI", () => {
     await runCli(["inspect", "--workspace", "ordinary", "--json"], inspection.io, { cwd });
     const unchanged = JSON.parse(inspection.stdout[0] ?? "").data;
     expect(unchanged.revision).toBe(0);
-    expect(unchanged.modules.some((module: { moduleId: string }) => module.moduleId === "local.habit-tracker")).toBe(false);
+    expect(unchanged.modules.some((module: { moduleId: string }) => module.moduleId === "local.track-meditation-every-day")).toBe(false);
   });
 
   it("creates dynamic custom tracker proposals for arbitrary requests", async () => {
@@ -663,7 +621,7 @@ describe("aimoto CLI", () => {
 
     expect(exitCode).toBe(0);
     const text = output.stdout.join("\n");
-    expect(text).toContain("Habit Tracker is ready for your review.");
+    expect(text).toContain("Track Meditation Every Day is ready for your review.");
     expect(text).toContain("aimoto apply --workspace req-human --proposal ");
 
     // Re-running request should succeed without staging collision / EPERM errors on Windows

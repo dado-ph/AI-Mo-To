@@ -12,7 +12,8 @@ import { EngineError, WorkspaceEngine } from "../src/index.js";
 import { type ChangeSet } from "@ai-mo-to/protocol";
 import {
   digestBundle,
-  createHabitTrackerBundle,
+  createDynamicTrackerBundle,
+  createDynamicTrackerPlan,
   proposalToModuleInstallChangeSet,
   type FoundryProposal
 } from "@ai-mo-to/foundry";
@@ -278,11 +279,12 @@ describe("WorkspaceEngine", () => {
     });
   });
 
-  it("installs an approved, digest-verified generated Habit Tracker bundle", async () => {
+  it("installs an approved, digest-verified generated module bundle", async () => {
     const root = await temporaryWorkspace();
     const engine = new WorkspaceEngine();
     const workspace = await engine.createWorkspace({ root, name: "Habit Workspace" });
-    const bundle = createHabitTrackerBundle();
+    const plan = createDynamicTrackerPlan("habit-request", "Track meditation");
+    const bundle = createDynamicTrackerBundle(plan);
     const files = bundle.files;
     const digest = digestBundle(files);
     const directory = join(root, "foundry-staging", digest.slice("sha256:".length));
@@ -293,13 +295,9 @@ describe("WorkspaceEngine", () => {
     const generated: FoundryProposal = {
       kind: "install-generated",
       requestId: "habit-request",
-      plan: {
-        requestId: "habit-request", moduleId: "local.habit-tracker", displayName: "Habit Tracker",
-        userOutcomes: ["Log habits"], records: [], views: [], commands: [], events: [],
-        requestedCapabilities: ["data.habit-entry.write"]
-      },
-      module: { moduleId: "local.habit-tracker", version: "0.1.0", digest, directory },
-      requestedCapabilities: ["data.habit-entry.write"],
+      plan,
+      module: { moduleId: plan.moduleId, version: "0.1.0", digest, directory },
+      requestedCapabilities: plan.requestedCapabilities,
       checks: {
         staticValidation: { ok: true, diagnostics: [] },
         dryActivation: { ok: true, diagnostics: [] }
@@ -309,7 +307,7 @@ describe("WorkspaceEngine", () => {
       workspaceId: workspace.workspaceId,
       baseRevision: 0,
       changeSetId: "86025cf5-3e2a-4eae-8e55-13b12ca5ccd1",
-      operationId: "install-habit-tracker",
+      operationId: `install-${plan.moduleId}`,
       createdAt: "2026-07-29T00:00:00.000Z"
     });
     const proposal = await engine.createProposal({
@@ -324,36 +322,10 @@ describe("WorkspaceEngine", () => {
       }
     });
 
-    expect(committed.modules).toEqual(expect.arrayContaining([expect.objectContaining({ moduleId: "local.habit-tracker", digest })]));
-    await expect(engine.listInstalledModuleViews(root, "local.habit-tracker")).resolves.toMatchObject([
-      { id: "habits", title: "Habits", kind: "list", collection: "habit" },
-      { id: "daily-check-in", title: "Daily check-in", kind: "form", collection: "habit-entry" },
-      { id: "history", title: "Completion history", kind: "timeline", collection: "habit-entry" }
-    ]);
-    const habit = await engine.executeHabitTrackerCommand({
-      root, command: "create-habit", input: { habitId: "meditate", name: "Meditate" }
-    });
-    await engine.executeHabitTrackerCommand({
-      root, command: "log-completion",
-      input: { entryId: "meditate-2026-07-29", habitId: habit.recordId, completedOn: "2026-07-29" }
-    });
-    await expect(engine.listHabitTrackerRecords(root, "habit-entry")).resolves.toMatchObject([
-      { recordId: "meditate-2026-07-29", data: { habitId: "meditate", completedOn: "2026-07-29" } }
-    ]);
-    const snapshot = await engine.createSnapshot(root);
-    await engine.executeHabitTrackerCommand({
-      root, command: "create-habit", input: { habitId: "temporary", name: "Temporary" }
-    });
-    const restore = await engine.createSnapshotRestoreProposal({
-      root, snapshotId: snapshot.snapshotId, proposalId: "45a0a6a9-f2b8-4bd6-a288-9ea0139c02c5"
-    });
-    await engine.approveProposal({ root, approval: {
-      schemaVersion: "1.0.0", approvalId: "5d47936b-2b87-4bac-8841-ed2613236513",
-      proposalId: restore.proposalId, workspaceId: workspace.workspaceId, baseRevision: 1,
-      changeSetDigest: restore.changeSetDigest, approvedAt: "2026-07-29T00:02:00.000Z"
-    }});
-    await expect(engine.listHabitTrackerRecords(root, "habit")).resolves.toEqual([
-      expect.objectContaining({ recordId: "meditate", version: 1, data: { habitId: "meditate", name: "Meditate" } })
+    expect(committed.modules).toEqual(expect.arrayContaining([expect.objectContaining({ moduleId: plan.moduleId, digest })]));
+    await expect(engine.listInstalledModuleViews(root, plan.moduleId)).resolves.toMatchObject([
+      { id: "tracks", title: "Track Meditation List", kind: "list", collection: "track" },
+      { id: "new-track", title: "Add Track Meditation", kind: "form", collection: "track" }
     ]);
   });
 
@@ -361,7 +333,8 @@ describe("WorkspaceEngine", () => {
     const root = await temporaryWorkspace();
     const engine = new WorkspaceEngine();
     const workspace = await engine.createWorkspace({ root, name: "Generated Notebook" });
-    const bundle = createHabitTrackerBundle();
+    const plan = createDynamicTrackerPlan("req-2", "Generated Notebook");
+    const bundle = createDynamicTrackerBundle(plan);
     const digest = digestBundle(bundle.files);
     const directory = join(root, "generated-app");
     for (const file of bundle.files) {

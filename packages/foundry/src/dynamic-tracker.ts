@@ -14,7 +14,7 @@ export function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-export function createDynamicTrackerPlan(requestId: string, requestText: string): ModulePlan {
+export function createDynamicAppPlan(requestId: string, requestText: string): ModulePlan {
   const cleanNeed = requestText.trim().replace(/^help me\s+/i, "").replace(/^i want to\s+/i, "");
   const slug = slugify(cleanNeed);
   const moduleId = `local.${slug}`;
@@ -34,7 +34,7 @@ export function createDynamicTrackerPlan(requestId: string, requestText: string)
   };
 }
 
-export function createDynamicTrackerBundle(plan: ModulePlan): GeneratedModuleBundle {
+export function createDynamicAppBundle(plan: ModulePlan): GeneratedModuleBundle {
   const record = plan.records[0]?.name || "item";
   const manifest = {
     schemaVersion: "1.0.0",
@@ -81,7 +81,7 @@ export function createDynamicTrackerBundle(plan: ModulePlan): GeneratedModuleBun
   };
 }
 
-async function validateDynamicTracker(module: StagedModule, moduleId: string): Promise<ValidationResult> {
+async function validateDynamicApp(module: StagedModule, moduleId: string): Promise<ValidationResult> {
   try {
     const manifest = JSON.parse(await readFile(`${module.directory}/module.json`, "utf8"));
     const validation = validateProtocol("module-manifest", manifest);
@@ -94,12 +94,12 @@ async function validateDynamicTracker(module: StagedModule, moduleId: string): P
   }
 }
 
-export function createDynamicTrackerFoundry(stagingRoot: string, requestText: string): Foundry {
-  const plan = createDynamicTrackerPlan("probe", requestText);
+export function createDynamicAppFoundry(stagingRoot: string, requestText: string): Foundry {
+  const plan = createDynamicAppPlan("probe", requestText);
   const hooks: FoundryHooks = {
     selector: { select: async () => undefined },
-    generator: { generate: async (p) => createDynamicTrackerBundle(p) },
-    staticValidator: { validate: (m) => validateDynamicTracker(m, plan.moduleId) },
+    generator: { generate: async (p) => createDynamicAppBundle(p) },
+    staticValidator: { validate: (m) => validateDynamicApp(m, plan.moduleId) },
     dryActivator: {
       activate: async (_module, disposableStateDirectory) => {
         await writeFile(`${disposableStateDirectory}/activation.json`, JSON.stringify({ activated: true }));
@@ -109,3 +109,8 @@ export function createDynamicTrackerFoundry(stagingRoot: string, requestText: st
   };
   return new Foundry(stagingRoot, hooks);
 }
+
+// Backwards-compatible exports
+export const createDynamicTrackerPlan = createDynamicAppPlan;
+export const createDynamicTrackerBundle = createDynamicAppBundle;
+export const createDynamicTrackerFoundry = createDynamicAppFoundry;
