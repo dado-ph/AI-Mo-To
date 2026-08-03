@@ -25,7 +25,8 @@
     "@ai-mo-to/engine": "workspace:*",
     "@ai-mo-to/ui-primitives": "workspace:*",
     "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0"
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "electron": "^37.2.0",

@@ -193,8 +193,25 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
     const cwd = typeof root === "string" ? root : process.cwd();
     const sessionId = `term-${Math.random().toString(36).slice(2, 9)}`;
     const shell = process.platform === "win32" ? "powershell.exe" : (process.env.SHELL || "bash");
+    const sender = event?.sender;
     
     try {
+      const pty = await import("node-pty");
+      const proc = pty.spawn(shell, [], {
+        name: "xterm-256color",
+        cols: 80,
+        rows: 24,
+        cwd,
+        env: process.env as Record<string, string>
+      });
+
+      proc.onData((data: string) => {
+        sender?.send?.("terminal:data", { sessionId, chunk: data });
+      });
+
+      activeTerminals.set(sessionId, { type: "pty", proc });
+      return { sessionId };
+    } catch {
       const { spawn } = await import("node:child_process");
       const proc = spawn(shell, process.platform === "win32" ? ["-NoLogo"] : [], {
         cwd,
@@ -202,7 +219,6 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
         stdio: ["pipe", "pipe", "pipe"]
       });
       
-      const sender = event?.sender;
       proc.stdout.on("data", (chunk: Buffer) => {
         sender?.send?.("terminal:data", { sessionId, chunk: chunk.toString("utf8") });
       });
@@ -210,23 +226,28 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
         sender?.send?.("terminal:data", { sessionId, chunk: chunk.toString("utf8") });
       });
 
-      activeTerminals.set(sessionId, proc);
+      activeTerminals.set(sessionId, { type: "pipe", proc });
       return { sessionId };
-    } catch (err: any) {
-      throw new Error(`Failed to launch terminal process: ${err?.message || err}`);
     }
   });
 
   runtime.ipcMain.handle("terminal:write", async (_event: unknown, sessionId: unknown, data: unknown) => {
     if (typeof sessionId !== "string" || typeof data !== "string") return;
-    const proc = activeTerminals.get(sessionId);
-    if (proc && proc.stdin && !proc.stdin.destroyed) {
-      proc.stdin.write(data);
+    const target = activeTerminals.get(sessionId);
+    if (!target) return;
+    if (target.type === "pty") {
+      target.proc.write(data);
+    } else if (target.proc && target.proc.stdin && !target.proc.stdin.destroyed) {
+      target.proc.stdin.write(data);
     }
   });
 
-  runtime.ipcMain.handle("terminal:resize", async () => {
-    // Resize dimensions handled by xterm fit addon
+  runtime.ipcMain.handle("terminal:resize", async (_event: unknown, sessionId: unknown, cols: unknown, rows: unknown) => {
+    if (typeof sessionId !== "string") return { ok: true };
+    const target = activeTerminals.get(sessionId);
+    if (target && target.type === "pty" && typeof cols === "number" && typeof rows === "number") {
+      try { target.proc.resize(cols, rows); } catch {}
+    }
     return { ok: true };
   });
 }
