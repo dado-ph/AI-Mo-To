@@ -378,7 +378,13 @@
       </div>
     </div>
     <div id="pill-body" class="pill-body">
-      <p style="margin: 0; color: #8e9baa;">AI-Mo-To Interactive PTY Terminal initialized.</p>
+      <div id="pill-output" style="white-space: pre-wrap;">
+        <p style="margin: 0 0 6px 0; color: #8e9baa;">AI-Mo-To Interactive PTY Terminal initialized.</p>
+      </div>
+      <form id="pill-form" style="display: flex; align-items: center; gap: 8px; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px;">
+        <span style="color: #71d7a5; font-weight: bold;">$</span>
+        <input id="pill-input" style="background: transparent; border: 0; color: #f3f5f7; flex: 1; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 0.85rem; outline: 0;" placeholder="Type command..." autocomplete="off" spellcheck="false" />
+      </form>
     </div>
   </aside>
 

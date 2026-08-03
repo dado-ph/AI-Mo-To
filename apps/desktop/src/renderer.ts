@@ -52,15 +52,38 @@ export function initPillTerminalOverlay(api: DesktopApi, workspaceRoot?: string)
   const maxBtn = element<HTMLElement>("#btn-term-max");
   const minBtn = element<HTMLElement>("#btn-term-min");
   const pillBody = element<HTMLElement>("#pill-body");
+  const pillOutput = element<HTMLElement>("#pill-output");
+  const pillForm = element<HTMLFormElement>("#pill-form");
+  const pillInput = element<HTMLInputElement>("#pill-input");
 
   maxBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     pill.classList.add("maximized");
+    pillInput.focus();
   });
 
   minBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     pill.classList.remove("maximized");
+  });
+
+  pillBody.addEventListener("click", () => {
+    pillInput.focus();
+  });
+
+  pillForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const command = pillInput.value;
+    if (activeTerminalSessionId) {
+      const line = document.createElement("div");
+      line.style.color = "#71d7a5";
+      line.style.fontWeight = "bold";
+      line.textContent = `$ ${command}`;
+      pillOutput.append(line);
+      api.writeTerminal(activeTerminalSessionId, `${command}\r\n`);
+      pillInput.value = "";
+      pillBody.scrollTop = pillBody.scrollHeight;
+    }
   });
 
   if (!activeTerminalSessionId) {
@@ -70,14 +93,14 @@ export function initPillTerminalOverlay(api: DesktopApi, workspaceRoot?: string)
       const p = document.createElement("p");
       p.style.margin = "0 0 6px 0";
       p.innerHTML = `<strong style="color:#71d7a5">&gt;_ PTY Active [${res.sessionId}]</strong> Rooted in ${rootPath}`;
-      pillBody.append(p);
+      pillOutput.append(p);
     }).catch(() => {});
 
     api.onTerminalData((data) => {
       if (data.chunk) {
         const span = document.createElement("span");
         span.textContent = data.chunk;
-        pillBody.append(span);
+        pillOutput.append(span);
         pillBody.scrollTop = pillBody.scrollHeight;
       }
     });
