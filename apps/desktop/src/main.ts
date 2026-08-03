@@ -122,7 +122,7 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
       await runCli(["apply", "--workspace", root, "--proposal", proposalId, "--hash", digest, "--json"], io);
       return engine.inspectWorkspace(root);
     },
-    createTerminal: async (root) => ({ sessionId: `term-stub-${root.length}` }),
+    createTerminal: async (root) => ({ sessionId: `term-stub-${root?.length ?? 0}` }),
     writeTerminal: async () => {},
     onTerminalData: () => {},
     resizeTerminal: async () => {}
@@ -190,7 +190,9 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
 
   const activeTerminals = new Map<string, any>();
   runtime.ipcMain.handle("terminal:create", async (event: any, root: unknown) => {
-    const cwd = typeof root === "string" ? root : process.cwd();
+    const cwd = typeof root === "string" && root.length > 0
+      ? root
+      : (process.env.USERPROFILE ?? process.cwd());
     const sessionId = `term-${Math.random().toString(36).slice(2, 9)}`;
     const shell = process.platform === "win32" ? "powershell.exe" : (process.env.SHELL || "bash");
     const sender = event?.sender;
@@ -322,14 +324,16 @@ export async function launchDesktop(): Promise<void> {
   const requestedRoot = requestedValue
     ? await resolveWorkspaceLaunchTarget(requestedValue, runtime.app.getPath("userData"))
     : undefined;
+  // The desktop shell never invents a workspace. A workspace is opened only
+  // when the person explicitly selects one or launches with --workspace.
   const initialWorkspace = requestedRoot
     ? await engine.inspectWorkspace(requestedRoot)
-    : await openOrCreateDefaultWorkspace(engine, runtime.app.getPath("userData"));
+    : undefined;
   registerDesktopIpc(runtime, engine, initialWorkspace);
   // Sandboxed Electron preload scripts run as CommonJS regardless of the
   // package's ESM setting. Use a dedicated bridge artifact in packaged builds.
   const preload = fileURLToPath(new URL("./preload.cjs", import.meta.url));
-  const renderer = fileURLToPath(new URL("./renderer.html", import.meta.url));
+  const renderer = fileURLToPath(new URL("./src/renderer-shadcn.html", import.meta.url));
   await openDesktopWindow(runtime, { preload, renderer });
   runtime.app.on("activate", () => { void openDesktopWindow(runtime, { preload, renderer }); });
   runtime.app.on("window-all-closed", () => { if (process.platform !== "darwin") runtime.app.quit(); });

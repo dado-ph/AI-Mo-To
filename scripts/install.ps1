@@ -36,7 +36,10 @@ $isLocalBuild = $false
 if ($UseLocalBuild) {
   $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
   $repoReleaseDir = Join-Path (Split-Path -Parent $scriptDir) "apps\desktop\release"
-  $localInstaller = Get-ChildItem -Path $repoReleaseDir -Filter "AI-Mo-To-Setup-*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+  $localInstaller = Get-ChildItem -Path $repoReleaseDir -Filter "AI-Mo-To-Setup-*-x64.exe" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Length -gt 1MB } |
+    Sort-Object -Property LastWriteTimeUtc -Descending |
+    Select-Object -First 1
   if ($localInstaller -and (Test-Path -LiteralPath $localInstaller.FullName)) {
     Write-Host "[AI-Mo-To] Using local release installer artifact: $($localInstaller.Name)"
     $installerPath = $localInstaller.FullName
@@ -68,8 +71,7 @@ if (-not $installerPath) {
   }
 
   if (-not $downloadUrl) {
-    $assetName = "AI-Mo-To-Setup-x64.exe"
-    $downloadUrl = "https://github.com/dado-ph/AI-Mo-To/releases/latest/download/AI-Mo-To-Setup-0.1.0-x64.exe"
+    throw "Could not locate an AI-Mo-To x64 installer in the latest GitHub release. Check the release assets or run this script from a checkout with -UseLocalBuild."
   }
 
   $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) $assetName

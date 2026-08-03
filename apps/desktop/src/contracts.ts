@@ -11,7 +11,7 @@ export interface DesktopApi {
   listModuleViews(root: string, moduleId: string): Promise<readonly InstalledModuleView[]>;
   requestOutcome(root: string, request: string): Promise<DesktopOutcomeProposalResult>;
   applyProposal(root: string, proposalId: string, digest: string): Promise<WorkspaceInspection>;
-  createTerminal(root: string): Promise<{ sessionId: string }>;
+  createTerminal(root?: string): Promise<{ sessionId: string }>;
   writeTerminal(sessionId: string, data: string): Promise<void>;
   onTerminalData(listener: (data: { sessionId: string; chunk: string }) => void): void;
   resizeTerminal(sessionId: string, cols: number, rows: number): Promise<void>;

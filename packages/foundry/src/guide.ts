@@ -19,7 +19,7 @@ not a finite list of app types: invent domain logic and source code as needed fo
 
 ## Default stack
 - TypeScript with React and Vite.
-- Local CSS design tokens and shadcn-inspired UI component primitives (Button, Card, Dialog, Input, Badge, Table, Tabs); no remote runtime assets.
+- **Shadcn/UI is mandatory.** Initialise the generated React application with the official shadcn CLI and commit its \`components.json\`, Tailwind CSS setup, and generated \`components/ui\` source. Build the interface from real shadcn components, beginning with Button, Card, Dialog, Input, Badge, Table, and Tabs where the workflow needs them. Do not substitute hand-rolled lookalikes, a component-type declaration, or a CSS-only imitation. No remote runtime assets.
 - AI-authored visual design: AI-Mo-To provides standard CSS token variable slots (\`--background\`, \`--foreground\`, \`--card\`, \`--primary\`, \`--radius\`). As the AI designer, infer the user's intent and author the exact color palette, typography, and visual feel that best suits the application; do not rely on hardcoded theme enums.
 - Approved AI-Mo-To storage adapter for persistence.
 - Vitest for logic and Playwright for critical UI flows.
@@ -27,8 +27,9 @@ not a finite list of app types: invent domain logic and source code as needed fo
 - Network, shell, outside-repository filesystem, and secrets require declared and approved capabilities.
 
 ## Product quality
-Leverage perfected UI/UX component patterns (shadcn primitives): use semantic, keyboard-accessible HTML, visible focus, responsive layouts,
+Use the installed shadcn components as the interaction primitive; use semantic, keyboard-accessible HTML, visible focus, responsive layouts,
 clear loading/error/empty states, readable hierarchy, consistent spacing/type/colour, input validation, and explicit recoverable destructive actions.
+Do not write commentary about the interface into the interface. Labels may name an action, object, state, or necessary consequence; they must not explain the design, reassure the person, narrate what the screen is doing, or fill empty space with product prose. Let the application make its point through hierarchy and interaction.
 
 ## Workspace shape
 The workspace is a human-governed, file-native environment generated for the person's needs. Compose its navigation, home view, data surfaces, actions, and supporting screens around the inferred workflow. Preserve the substrate every workspace needs: a clear way to understand what is installed, inspect authority and capabilities, see health and provenance, recover safely, and reach the generated application.

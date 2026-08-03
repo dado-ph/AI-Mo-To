@@ -21,13 +21,13 @@
   --aimoto-subtle: #6c788a;
 
   /* Brand & Accent Tokens */
-  --aimoto-accent: #71d7a5;
-  --aimoto-accent-soft: #173a2b;
-  --aimoto-accent-border: #245c43;
-  --aimoto-accent-text: #9aebc2;
+  --aimoto-accent: #6366f1;
+  --aimoto-accent-soft: rgba(99, 102, 241, 0.15);
+  --aimoto-accent-border: rgba(99, 102, 241, 0.35);
+  --aimoto-accent-text: #c7d2fe;
 
   /* Focus & Accessibility */
-  --aimoto-focus-ring: #71d7a5;
+  --aimoto-focus-ring: #818cf8;
   
   /* Status Tones */
   --aimoto-neutral-soft: #1d2229;

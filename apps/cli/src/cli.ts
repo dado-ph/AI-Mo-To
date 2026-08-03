@@ -630,6 +630,18 @@ async function createOutcomeProposal(
       if (result.exitCode !== 0) {
         throw new EngineError("ValidationFailed", `Agent provider '${agentProvider.name}' failed while building the app.`, { app, result });
       }
+    try {
+      await Promise.all([
+        access(join(app.root, "components.json")),
+        access(join(app.root, "components", "ui"))
+      ]);
+    } catch {
+      throw new EngineError(
+        "ValidationFailed",
+        "Generated applications must include an initialized Shadcn/UI project (components.json and components/ui).",
+        { app }
+      );
+    }
     let manifest: {
       moduleId?: string;
       version?: string;
