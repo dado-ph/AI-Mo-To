@@ -1,9 +1,9 @@
 import type { DesktopApi, DesktopScreen } from "./contracts.js";
 
 function authorityBadge(mode: string): { label: string; tone: "positive" | "neutral" | "caution" } {
-  if (mode === "build") return { label: "Build changes", tone: "caution" };
-  if (mode === "suggest") return { label: "Suggest changes", tone: "positive" };
-  return { label: mode, tone: "neutral" };
+  if (mode === "build") return { label: "Build mode", tone: "caution" };
+  if (mode === "suggest") return { label: "Suggest mode", tone: "positive" };
+  return { label: `${mode} mode`, tone: "neutral" };
 }
 
 const rendererViews: DesktopScreen["views"] = [];
@@ -44,10 +44,41 @@ function element<T extends Element>(selector: string): T {
   return found;
 }
 
+let activeTerminalSessionId: string | undefined;
+
+export function initTerminalBridge(api: DesktopApi, workspaceRoot?: string): void {
+  const drawer = element<HTMLElement>("#terminal-drawer");
+  const toggleBtn = element<HTMLElement>("#terminal-toggle");
+  const view = element<HTMLElement>("#terminal-view");
+
+  toggleBtn.addEventListener("click", () => {
+    drawer.classList.toggle("collapsed");
+    toggleBtn.textContent = drawer.classList.contains("collapsed") ? "▲ Expand" : "▼ Minimize";
+  });
+
+  if (workspaceRoot && !activeTerminalSessionId) {
+    api.createTerminal(workspaceRoot).then((res) => {
+      activeTerminalSessionId = res.sessionId;
+      const line = document.createElement("p");
+      line.className = "term-line";
+      line.innerHTML = `<span class="term-prompt">PTY Session Active [${res.sessionId}]</span> Rooted in ${workspaceRoot}`;
+      view.append(line);
+    }).catch(() => {});
+
+    api.onTerminalData((data) => {
+      if (data.chunk) {
+        const line = document.createElement("span");
+        line.textContent = data.chunk;
+        view.append(line);
+        view.scrollTop = view.scrollHeight;
+      }
+    });
+  }
+}
+
 export function renderScreen(screen: DesktopScreen): void {
   const status = element<HTMLElement>("#status");
   const workspaceName = element<HTMLElement>("#workspace-name");
-  const workspacePath = element<HTMLElement>("#workspace-path");
   const authorityLabel = element<HTMLElement>("#authority-label");
   const viewsContainer = element<HTMLElement>("#views");
   const nav = element<HTMLElement>("#module-nav");
@@ -57,22 +88,22 @@ export function renderScreen(screen: DesktopScreen): void {
 
   if (screen.workspace) {
     workspaceName.textContent = screen.workspace.name;
-    workspacePath.textContent = screen.workspace.root;
-    status.textContent = `Revision ${screen.workspace.revision} · ${screen.workspace.modules.length} trusted modules · Healthy`;
+    status.textContent = `Revision ${screen.workspace.revision} · ${screen.workspace.modules.length} installed modules · Healthy`;
+    
     const overview = document.createElement("button");
-    overview.className = "module-button active";
-    overview.textContent = "Overview";
+    overview.className = "nav-item active";
+    overview.textContent = "⌂ Overview";
     nav.append(overview);
+
     for (const view of screen.generatedViews) {
       const button = document.createElement("button");
-      button.className = "module-button";
+      button.className = "nav-item";
       button.dataset.moduleId = view.moduleId;
       button.dataset.viewId = view.id;
-      button.textContent = view.title;
+      button.textContent = `✓ ${view.title}`;
       button.addEventListener("click", () => {
-        nav.querySelectorAll(".module-button").forEach(item => item.classList.remove("active"));
+        nav.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
         button.classList.add("active");
-        element<HTMLElement>("#view-title").textContent = view.title;
         element<HTMLElement>("#page-heading").textContent = view.title;
         viewsContainer.replaceChildren();
         viewsContainer.classList.toggle("app-active", view.kind === "app");
@@ -98,7 +129,6 @@ export function renderScreen(screen: DesktopScreen): void {
     }
   } else {
     workspaceName.textContent = "AI-Mo-To";
-    workspacePath.textContent = "Choose a workspace";
     status.textContent = "No workspace open.";
   }
 
@@ -119,16 +149,6 @@ export function renderScreen(screen: DesktopScreen): void {
     card.append(h2, p);
     viewsContainer.append(card);
   }
-
-  if (screen.workspace) {
-    const home = screen.workspace.layout.views.find(entry => entry.id === screen.workspace!.layout.homeView);
-    const homeButton = home
-      ? nav.querySelector<HTMLButtonElement>(
-          `[data-module-id="${CSS.escape(home.moduleId)}"][data-view-id="${CSS.escape(home.viewId)}"]`
-        )
-      : undefined;
-    homeButton?.click();
-  }
 }
 
 if (typeof window !== "undefined") {
@@ -142,6 +162,7 @@ if (typeof window !== "undefined") {
     try {
       const screen = await openDefaultWorkspace(api);
       renderScreen(screen);
+      initTerminalBridge(api, screen.workspace?.root);
     } catch (error) {
       if (status) status.textContent = `Error: ${error instanceof Error ? error.message : String(error)}`;
     }

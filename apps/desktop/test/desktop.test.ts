@@ -39,6 +39,7 @@ describe("desktop shell", () => {
     );
     expect(preload).toContain('require("electron")');
     expect(preload).toContain('contextBridge.exposeInMainWorld("aimoto"');
+    expect(preload).toContain("createTerminal");
   });
 
   it("packages the renderer stylesheet beside renderer.html", async () => {
@@ -185,7 +186,7 @@ describe("desktop shell", () => {
     );
     expect(handle.mock.calls.map(([channel]) => channel)).toEqual([
       "workspace:default", "workspace:inspect", "workspace:select", "workspace:request", "workspace:apply", "records:list", "records:execute",
-      "module:views"
+      "module:views", "terminal:create", "terminal:write", "terminal:resize"
     ]);
   });
 

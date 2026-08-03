@@ -121,7 +121,11 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
       const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
       await runCli(["apply", "--workspace", root, "--proposal", proposalId, "--hash", digest, "--json"], io);
       return engine.inspectWorkspace(root);
-    }
+    },
+    createTerminal: async (root) => ({ sessionId: `term-stub-${root.length}` }),
+    writeTerminal: async () => {},
+    onTerminalData: () => {},
+    resizeTerminal: async () => {}
   };
 }
 
@@ -182,6 +186,48 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
   runtime.ipcMain.handle("module:views", async (_event: unknown, root: unknown, moduleId: unknown) => {
     if (typeof root !== "string" || typeof moduleId !== "string") throw new Error("workspace root and module id must be strings");
     return engine.listInstalledModuleViews(root, moduleId);
+  });
+
+  const activeTerminals = new Map<string, any>();
+  runtime.ipcMain.handle("terminal:create", async (event: any, root: unknown) => {
+    const cwd = typeof root === "string" ? root : process.cwd();
+    const sessionId = `term-${Math.random().toString(36).slice(2, 9)}`;
+    const shell = process.platform === "win32" ? "powershell.exe" : (process.env.SHELL || "bash");
+    
+    try {
+      const { spawn } = await import("node:child_process");
+      const proc = spawn(shell, process.platform === "win32" ? ["-NoLogo"] : [], {
+        cwd,
+        env: { ...process.env, TERM: "xterm-256color" },
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+      
+      const sender = event?.sender;
+      proc.stdout.on("data", (chunk: Buffer) => {
+        sender?.send?.("terminal:data", { sessionId, chunk: chunk.toString("utf8") });
+      });
+      proc.stderr.on("data", (chunk: Buffer) => {
+        sender?.send?.("terminal:data", { sessionId, chunk: chunk.toString("utf8") });
+      });
+
+      activeTerminals.set(sessionId, proc);
+      return { sessionId };
+    } catch (err: any) {
+      throw new Error(`Failed to launch terminal process: ${err?.message || err}`);
+    }
+  });
+
+  runtime.ipcMain.handle("terminal:write", async (_event: unknown, sessionId: unknown, data: unknown) => {
+    if (typeof sessionId !== "string" || typeof data !== "string") return;
+    const proc = activeTerminals.get(sessionId);
+    if (proc && proc.stdin && !proc.stdin.destroyed) {
+      proc.stdin.write(data);
+    }
+  });
+
+  runtime.ipcMain.handle("terminal:resize", async () => {
+    // Resize dimensions handled by xterm fit addon
+    return { ok: true };
   });
 }
 
