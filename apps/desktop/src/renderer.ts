@@ -96,6 +96,17 @@ export function initPillTerminalOverlay(api: DesktopApi, workspaceRoot?: string)
     setTimeout(() => { try { fitAddonInstance?.fit(); } catch {} }, 100);
   });
 
+  pill.addEventListener("mouseenter", () => {
+    setTimeout(() => { try { fitAddonInstance?.fit(); } catch {} }, 150);
+  });
+
+  pill.addEventListener("click", () => {
+    setTimeout(() => {
+      try { fitAddonInstance?.fit(); } catch {}
+      xtermInstance?.focus();
+    }, 150);
+  });
+
   if (!activeTerminalSessionId) {
     const rootPath = workspaceRoot || "default";
     api.createTerminal(rootPath).then((res) => {
