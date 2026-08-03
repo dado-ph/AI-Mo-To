@@ -1,17 +1,5 @@
-# ADR-0002: Module host and trust tiers
+# Modules and trust tiers
 
-- Status: Accepted
-- Date: 2026-07-29
+Modules declare a trust tier: `core`, `local-generated`, `verified-community`, or `community`. A module handler runs in a local Node child process and asks the engine for the capabilities it needs.
 
-## Decision
-
-Dynamic module handlers run in pinned active-LTS Node child processes and
-request resources through typed engine brokers. Modules are classified as core,
-local-generated, verified-community, or community, with progressively stricter
-default capability treatment.
-
-## Consequences
-
-The child process is a fault boundary in v0.1. It becomes a security boundary
-only when operating-system restrictions remove ambient resource access.
-
+The child process contains crashes and timeouts, but it is not an operating-system security sandbox. Capability checks apply when a module uses the engine's managed interfaces.

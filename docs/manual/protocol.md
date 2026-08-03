@@ -40,7 +40,8 @@ and writes the manifest. A later commit makes competing proposals stale.
 Schema-valid does not mean engine-supported. The ChangeSet schema allows a
 general operation `kind`, but this engine release executes only
 `workspace.set-authority-mode` and `module.install`; other kinds are rejected
-with `ValidationFailed`. The CLI creates only the former.
+with `ValidationFailed`. The CLI creates mode-change proposals with `plan` and
+module-install proposals with `request`.
 
 Use `validateProtocol(name, value)` before relying on a payload. Use
 `canonicalJson`, `canonicalJsonBytes`, `sha256Digest`, and

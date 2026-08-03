@@ -1,17 +1,5 @@
-# ADR-0005: Snapshots and migration semantics
+# Snapshots and recovery
 
-- Status: Accepted
-- Date: 2026-07-29
+A snapshot captures the workspace manifest, revision history, installed-module metadata, local records, context, and event-log position. It is content-addressed and verified before a restore is proposed.
 
-## Decision
-
-Snapshots bind the workspace manifest, module digests and schemas, data,
-context, event position, and engine configuration references. Schema migrations
-run against copied current and representative historical data before activation.
-Historical module bundles remain content-addressed.
-
-## Consequences
-
-Credentials stay outside snapshots. Failed or lossy migrations cannot touch the
-active workspace, and restoration is validated as a proposed new revision.
-
+AI-Mo-To creates a pre-apply snapshot before a workspace change. Restoring a snapshot is itself a proposal and results in a new revision, so recovery preserves the earlier audit trail. Snapshots do not include secrets or replace normal file backups.

@@ -1,146 +1,99 @@
-# Getting Started with AI-Mo-To
+# Get started with AI-Mo-To
 
-Welcome to **AI-Mo-To**! AI-Mo-To is a human-governed local workspace harness and mega-wrapper designed for AI pair-programming and tool creation.
+AI-Mo-To is a local workspace that you can shape with the `aimoto` CLI or with a CLI coding agent such as Codex. You describe what you need, inspect the proposed change, and decide whether to apply it. The workspace remains yours throughout.
 
----
+## Before you start
 
-## 🏛️ The 3-Tier Architecture
+Use one of these paths:
 
-AI-Mo-To is structured around three clear boundaries that guarantee safety, privacy, and full human control:
+- **Windows app:** install AI-Mo-To Desktop on Windows x64. The installer also makes the `aimoto` command available.
+- **From source:** use Node.js 22 or later and pnpm 11 or later, then run `pnpm install` and `pnpm build` from this repository.
 
-```
-  ┌─────────────────────────────────────────────────────────────┐
-  │  Tier 1: Core Host Platform (Immutable Repo / Binaries)    │
-  │  • Platform engine, safety sandbox, CLI & Desktop Shell     │
-  │  • AI Agents are STRICTLY FORBIDDEN from editing Tier 1.   │
-  └──────────────────────────────┬──────────────────────────────┘
-                                 │
-  ┌──────────────────────────────▼──────────────────────────────┐
-  │  Tier 2: Generative App Lab (Foundry Staging Lab)           │
-  │  • Isolated build directory per outcome request             │
-  │  • AI writes React UI, CSS tokens, Python/Node scripts      │
-  └──────────────────────────────┬──────────────────────────────┘
-                                 │ (Human Approval & Digest Verification)
-  ┌──────────────────────────────▼──────────────────────────────┐
-  │  Tier 3: User Workspace (Documents/AI-Mo-To/Workspaces)     │
-  │  • Your actual files (.md, .pdf, .csv, .py, code)            │
-  │  • Human-governed, file-native, offline environment         │
-  └─────────────────────────────────────────────────────────────┘
+After installation, confirm that the CLI is available:
+
+```powershell
+aimoto --help
 ```
 
-1. **Tier 1 (Core Host Platform)**: The underlying engine, security sandbox, and desktop shell. It stays clean and immutable—AI agents never modify Tier 1 files.
-2. **Tier 2 (Generative App Lab / Foundry)**: Where the AI experiments, writes source code (React UI components, CSS design tokens, Python/Node scripts), and compiles self-contained app bundles.
-3. **Tier 3 (User Workspaces)**: Located natively in your natural system folders (e.g. `Documents/AI-Mo-To/Workspaces/`). Contains your actual files (`.md`, `.pdf`, `.csv`, code) and installed, verified app modules.
+## 1. Create a workspace
 
----
-
-## 📌 Prerequisites
-
-To run AI-Mo-To, you need:
-* **Windows 10/11 x64** (for installer release)
-* Or **Node.js 22+** & **pnpm 11+** (if building from source)
-
----
-
-## 🛠️ Step 1: Create Your First File-Native Workspace
-
-Create a workspace in your natural documents directory:
+Choose a folder that you want AI-Mo-To to manage. This example creates one in your Documents folder:
 
 ```powershell
 $workspace = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "AI-Mo-To\Workspaces\My-Workspace"
-pnpm --filter @ai-mo-to/cli aimoto workspace create "My Workspace" --root $workspace
+aimoto workspace create "My Workspace" --root $workspace
 ```
 
-Upon creation, AI-Mo-To generates a workspace at **Revision 0** with two core built-in modules:
-* **Files (`aimoto.files`)**: Local file indexing and knowledge management.
-* **Tasks (`aimoto.tasks`)**: Action item tracking and workspace task management.
-
-Inspect your workspace state at any time:
+The workspace starts with Files and Tasks, a local revision history, and the default `suggest` authority mode. You can inspect it at any time:
 
 ```powershell
-pnpm --filter @ai-mo-to/cli aimoto inspect --workspace $workspace
+aimoto inspect --workspace $workspace
 ```
 
----
+## 2. Shape the workspace
 
-## 🛡️ Step 2: Understanding Authority Modes
+### Ask AI-Mo-To directly
 
-AI-Mo-To operates under **5 Monotonic Authority Modes** to ensure safety:
-
-| Authority Mode | Capabilities & Restrictions |
-| :--- | :--- |
-| **`observe`** | **Read-Only**: Workspace context can be inspected, but all write/mutation operations are blocked. |
-| **`suggest`** | **Planning Mode** *(Default)*: AI agents can generate plans and proposals (`ChangeSet`), but cannot apply them. |
-| **`assist`** | **Staging Mode**: Proposals can be prepared and human approvals recorded. |
-| **`execute`** | **Execution Mode**: Pre-approved proposals and schema-validated commands execute automatically. |
-| **`build`** | **Foundry Mode**: Full authority to stage and install new custom modules or modify core schemas. |
-
----
-
-## 💡 Step 3: Request a Custom Tool (Generative Staging)
-
-Ask AI-Mo-To to generate a tool for an outcome you want:
+Use `request` to ask for a local tool or workflow. It prepares a proposal but does not install anything.
 
 ```powershell
-# 1. Ask the AI for an outcome request proposal
-$plan = pnpm --filter @ai-mo-to/cli aimoto request "I want to track meditation every day" --workspace $workspace --json | ConvertFrom-Json
-
-# 2. Inspect the generated proposal
-$plan.data.plan
+$review = aimoto request "Help me track meditation every day" --workspace $workspace --json | ConvertFrom-Json
 ```
 
-Review the output. Notice two key fields:
-* **`proposalId`**: The unique identifier for this specific installation request.
-* **`changeSetDigest`**: The SHA-256 fingerprint of the exact diff you reviewed.
+Read the plan, requested capabilities, and exact digest in `$review` before continuing.
 
----
+### Ask a CLI coding agent
 
-## ✅ Step 4: Approve and Apply the Proposal
-
-Before any state changes on disk, AI-Mo-To requires human approval binding the exact `proposalId` and `changeSetDigest`:
+If Codex CLI is installed, you can ask it in plain language to build a workspace feature with AI-Mo-To. Under the hood, the agent uses the same `request` flow with `--agent`; it works in an isolated generated-app repository, not in the trusted workspace itself.
 
 ```powershell
-# Apply the reviewed proposal using its proposalId and SHA-256 digest
-pnpm --filter @ai-mo-to/cli aimoto apply --workspace $workspace --proposal $plan.data.proposal.proposalId --hash $plan.data.proposal.changeSetDigest --json
-
-# Verify the workspace update
-pnpm --filter @ai-mo-to/cli aimoto inspect --workspace $workspace
+aimoto request "Create a local project tracker with tasks, due dates, and a weekly view" --workspace $workspace --agent
 ```
 
-Your workspace will now reflect **Revision 1** and include your new installed dynamic module alongside **Files** and **Tasks**.
+The agent's result is still only a proposal. Review it before applying it.
 
----
+## 3. Review and apply
 
-## 📸 Step 5: Create and Recover a Safety Snapshot
-
-Before making major structural updates, create a snapshot point:
+Every proposal includes an ID and a SHA-256 digest. Applying requires both values, so the applied change is the one you reviewed.
 
 ```powershell
-# Create a snapshot point
-$snapshot = pnpm --filter @ai-mo-to/cli aimoto snapshot create --workspace $workspace --json | ConvertFrom-Json
-
-# Inspect the created snapshot
-pnpm --filter @ai-mo-to/cli aimoto snapshot inspect $snapshot.data.snapshotId --workspace $workspace --json
+$proposalId = $review.data.proposal.proposalId
+$digest = $review.data.proposal.changeSetDigest
+aimoto apply --workspace $workspace --proposal $proposalId --hash $digest --json
 ```
 
-### Restoring State Safely
-Restoring a snapshot in AI-Mo-To follows a governed 2-step process:
-1. **`snapshot restore-propose`**: Generates a restoration proposal without touching workspace state.
-2. **`aimoto apply`**: Applies the proposal with human approval, restoring state as a **new revision** while preserving complete historical audit logs.
+Then inspect the workspace again:
 
----
+```powershell
+aimoto inspect --workspace $workspace
+```
 
-## ❓ Frequently Asked Questions & Troubleshooting
+AI-Mo-To creates a recovery snapshot before it applies a workspace change. A changed workspace revision makes an earlier proposal stale, so it cannot be applied by accident.
 
-### Q: Can an AI model modify the core AI-Mo-To application?
-**A**: No. Tier 1 (the core AI-Mo-To application repository and binaries) is strictly immutable to AI agents. The AI agent only writes code inside Tier 2 (the isolated Foundry staging directory), which is then verified and approved into Tier 3 (your workspace).
+## Authority modes
 
-### Q: Does AI-Mo-To lock my data inside a hidden database?
-**A**: No. AI-Mo-To is file-native. Your documents, notes, CSVs, and code live as normal files in your workspace directory (`Documents/AI-Mo-To/Workspaces/`). You can open, edit, and move them with any text editor or tools you love.
+Workspaces use five authority modes: `observe`, `suggest`, `assist`, `execute`, and `build`. The default is `suggest`. Changing a mode is itself a proposed change:
 
----
+```powershell
+$modeChange = aimoto plan --workspace $workspace --set-authority build --json | ConvertFrom-Json
+aimoto apply --workspace $workspace --proposal $modeChange.data.proposalId --hash $modeChange.data.changeSetDigest --json
+```
 
-## 🔗 Next Steps
+Use `build` only when you need to stage or install a custom module. The CLI will show the exact effects before you apply the proposal.
 
-* Read the [CLI Command Reference](manual/cli.md) for full argument lists.
-* Explore [Module Development](manual/module-development.md) to build your own custom tools.
+## Recover a workspace
+
+You can also create a snapshot whenever you want a named recovery point:
+
+```powershell
+$snapshot = aimoto snapshot create --workspace $workspace --json | ConvertFrom-Json
+aimoto snapshot inspect $snapshot.data.snapshotId --workspace $workspace
+```
+
+Restoring a snapshot first creates another proposal. It does not overwrite history or change the workspace until you review and apply that proposal.
+
+## Where to go next
+
+- [CLI guide](manual/cli.md) for every command and its arguments.
+- [Operations and limits](manual/operations-and-limits.md) for the current trust and product boundaries.
+- [Module development](manual/module-development.md) if you are extending the platform.

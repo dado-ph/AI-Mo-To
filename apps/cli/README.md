@@ -1,27 +1,38 @@
 # AI-Mo-To CLI
 
-The CLI accepts an outcome in ordinary language. A user or AI assistant does not
-need to know module, foundry, or ChangeSet terminology:
+`aimoto` is the command-line way to create, inspect, and evolve a local AI-Mo-To workspace.
+
+It has one simple rule: a request can prepare a change, but only `apply` can commit it, and `apply` requires the exact proposal ID and digest that a person has reviewed.
+
+## Start a workspace
 
 ```powershell
-aimoto init "My Life" --root my-life
-aimoto request "Help me track meditation every day" --workspace my-life
+aimoto workspace create "My Workspace" --root ./my-workspace
+aimoto inspect --workspace ./my-workspace
 ```
 
-`request` prepares and validates a proposal but never approves or installs it.
-Its response explains what AI-Mo-To understood, what would be added, the exact
-proposal digest, and the separate `apply` command required after human review.
-Use `--json` for the versioned machine-readable envelope.
+## Ask for a workspace feature
 
-The current release honestly supports only habit and recurring-practice tracking.
-Unsupported needs fail without creating a proposal or changing the workspace and
-report the supported outcome in the JSON error details.
+Use `request` for a direct local request:
 
-The lower-level `agent habit plan` command remains available for compatibility.
+```powershell
+aimoto request "Help me track meditation every day" --workspace ./my-workspace
+```
 
-After installation, `module views` and `records list` let an assistant verify
-the result without executing generated code. `habit create` and `habit log`
-are deliberately explicit interactions with the installed tool. They should
-only be run in response to a user's instruction to create that habit or log
-that completion; approval to install the tool does not authorize personal-data
-mutation. Run `aimoto --help --json` for the current argument contract.
+Or let a configured Codex CLI agent build a feature in an isolated generated-app repository:
+
+```powershell
+aimoto request "Create a project tracker with a weekly view" --workspace ./my-workspace --agent
+```
+
+Both commands return a proposal. Read the proposed changes, requested capabilities, proposal ID, and SHA-256 digest. Do not treat a request as approval.
+
+## Apply a reviewed proposal
+
+```powershell
+aimoto apply --workspace ./my-workspace --proposal <proposal-id> --hash <sha256:digest>
+```
+
+AI-Mo-To rejects a changed, stale, missing, or already-applied proposal. It also creates a pre-apply recovery snapshot before committing a workspace change.
+
+Use `aimoto --help --json` for the machine-readable command contract, or see the [full CLI guide](../../docs/manual/cli.md).
