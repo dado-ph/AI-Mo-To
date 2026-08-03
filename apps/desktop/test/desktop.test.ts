@@ -10,7 +10,7 @@ import { exposeDesktopApi } from "../src/preload.js";
 
 describe("desktop shell", () => {
   it("renders Files and Tasks even before a workspace is selected", () => {
-    expect(screenFor().views.map((view) => view.id)).toEqual(["files", "tasks", "research"]);
+    expect(screenFor().views.map((view) => view.id)).toEqual(["files", "tasks"]);
     expect(screenFor().views[1]?.actions?.[0]?.label).toBe("Try an example");
   });
 
@@ -180,12 +180,12 @@ describe("desktop shell", () => {
       {
         inspectWorkspace: vi.fn(), listBuiltInRecords: vi.fn(), executeBuiltInCommand: vi.fn(),
         listInstalledModuleViews: vi.fn(), listHabitTrackerRecords: vi.fn(), executeHabitTrackerCommand: vi.fn()
-      },
+      } as never,
       { root: "C:/default" } as never
     );
     expect(handle.mock.calls.map(([channel]) => channel)).toEqual([
       "workspace:default", "workspace:inspect", "workspace:select", "workspace:request", "workspace:apply", "records:list", "records:execute",
-      "module:views", "habits:list", "habits:execute"
+      "module:views"
     ]);
   });
 

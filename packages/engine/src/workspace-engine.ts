@@ -775,39 +775,27 @@ export class WorkspaceEngine {
     } finally { store.close(); }
   }
 
-  async listHabitTrackerRecords(rootInput: string, collectionId: string): Promise<readonly BuiltInRecord[]> {
-    return this.listInstalledModuleRecords(rootInput, "local.habit-tracker", collectionId);
-  }
-
-  /** Executes the generated proof module through engine-owned storage, never its generated handler file. */
-  async executeHabitTrackerCommand(input: ExecuteHabitTrackerCommandInput): Promise<BuiltInRecord> {
+  async executeModuleRecordCommand(input: {
+    root: string;
+    moduleId: string;
+    collectionId: string;
+    recordId: string;
+    data: Record<string, unknown>;
+    now?: () => Date;
+  }): Promise<BuiltInRecord> {
     const root = resolve(input.root);
     const workspace = await this.inspectWorkspace(root);
-    AuthorityStateGuard.assertCanMutateState(workspace.authorityMode, "executeHabitTrackerCommand");
-    if (!workspace.modules.some((module) => module.moduleId === "local.habit-tracker")) {
-      throw new EngineError("ModuleNotInstalled", "Habit Tracker is not installed in this workspace.");
-    }
+    AuthorityStateGuard.assertCanMutateState(workspace.authorityMode, "executeModuleRecordCommand");
     const now = (input.now ?? (() => new Date()))().toISOString();
     const store = new WorkspaceStore(workspaceDatabasePath(root));
     try {
       store.initialize();
-      if (input.command === "create-habit") {
-        const recordId = requiredString(input.input, "habitId", 160);
-        const data = { habitId: recordId, name: requiredString(input.input, "name", 240) };
-        return store.createRecord({ moduleId: "local.habit-tracker", collectionId: "habit", recordId, data, now });
-      }
-      const recordId = requiredString(input.input, "entryId", 160);
-      const habitId = requiredString(input.input, "habitId", 160);
-      if (!store.getRecord("local.habit-tracker", "habit", habitId)) {
-        throw new EngineError("RecordNotFound", `Habit ${habitId} does not exist.`);
-      }
-      const completedOn = requiredString(input.input, "completedOn", 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(completedOn) || Number.isNaN(Date.parse(`${completedOn}T00:00:00Z`))) {
-        throw new EngineError("ValidationFailed", "completedOn must be an ISO calendar date.");
-      }
       return store.createRecord({
-        moduleId: "local.habit-tracker", collectionId: "habit-entry", recordId,
-        data: { entryId: recordId, habitId, completedOn }, now
+        moduleId: input.moduleId,
+        collectionId: input.collectionId,
+        recordId: input.recordId,
+        data: input.data,
+        now
       });
     } catch (error) {
       mapRecordError(error);

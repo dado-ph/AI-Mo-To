@@ -40,14 +40,10 @@ import {
   type JsonEnvelope
 } from "@ai-mo-to/protocol";
 import {
+  createDynamicAppFoundry,
+  createDynamicAppPlan,
   createDynamicTrackerFoundry,
   createDynamicTrackerPlan,
-  createHabitTrackerFoundry,
-  createHabitTrackerPlan,
-  createResearchCollectorFoundry,
-  createResearchCollectorPlan,
-  createTaskManagerFoundry,
-  createTaskManagerPlan,
   proposalToModuleInstallChangeSet,
   allocateAgentAppRepository,
   DEFAULT_AGENT_GUIDE,
@@ -394,9 +390,6 @@ function usage(color: boolean = supportsColor(), showBanner: boolean = color): s
     `  ${fBold}aimoto inspect${r} ${f}[--workspace <path>] [--json]${r}`,
     `  ${fBold}aimoto module views${r} ${f}--module <id> [--workspace <path>] [--json]${r}`,
     `  ${fBold}aimoto records list${r} ${f}--module <id> [--collection <id>] [--workspace <path>] [--json]${r}`,
-    `  ${fBold}aimoto habit create${r} ${f}--id <id> --name "<name>" [--workspace <path>] [--json]${r}`,
-    `  ${fBold}aimoto habit log${r} ${f}--habit <id> --entry <id> --date <YYYY-MM-DD> [--workspace <path>] [--json]${r}`,
-    `  ${fBold}aimoto agent habit plan${r} ${f}--workspace <path> [--request "what you need"] [--json]${r}`,
     `  ${fBold}aimoto apply${r} ${f}--workspace <path> --proposal <id> --hash <digest> [--json]${r}`,
     `  ${fBold}aimoto open${r} ${f}[--workspace <path>] [--json]${r}`,
     "",
@@ -406,15 +399,12 @@ function usage(color: boolean = supportsColor(), showBanner: boolean = color): s
     `  ${fBold}aimoto request${r} ${f}"<ordinary need>" --workspace <path> [--json]${r}`,
     `  ${fBold}aimoto inspect${r} ${f}[--workspace <path>] [--json]${r}`,
     `  ${fBold}aimoto module views${r} ${f}--module <id> [--workspace <path>] [--json]${r}`,
-    `  ${fBold}aimoto records list${r} ${f}--module <aimoto.files|aimoto.tasks|local.habit-tracker> [--collection <habit|habit-entry>] [--workspace <path>] [--json]${r}`,
-    `  ${fBold}aimoto habit create${r} ${f}--id <id> --name "<name>" [--workspace <path>] [--json]${r}`,
-    `  ${fBold}aimoto habit log${r} ${f}--habit <id> --entry <id> --date <YYYY-MM-DD> [--workspace <path>] [--json]${r}`,
+    `  ${fBold}aimoto records list${r} ${f}--module <id> [--collection <id>] [--workspace <path>] [--json]${r}`,
     `  ${fBold}aimoto snapshot create${r} ${f}[--workspace <path>] [--json]${r}`,
     `  ${fBold}aimoto snapshot list${r} ${f}[--workspace <path>] [--json]${r}`,
     `  ${fBold}aimoto snapshot inspect${r} ${f}<snapshot-id> [--workspace <path>] [--json]${r}`,
     `  ${fBold}aimoto snapshot restore-plan${r} ${f}<snapshot-id> [--workspace <path>] [--json]${r}`,
     `  ${fBold}aimoto snapshot restore-propose${r} ${f}<snapshot-id> [--workspace <path>] [--json]${r}`,
-    `  ${fBold}aimoto agent habit plan${r} ${f}--workspace <path> [--request "what you need"] [--json]${r}`,
     `  ${fBold}aimoto plan${r} ${f}--workspace <path> --set-authority <mode> [--json]${r}`,
     `  ${fBold}aimoto apply${r} ${f}--workspace <path> --proposal <id> --hash <digest> [--principal <id>] [--json]${r}`,
     "",
@@ -566,7 +556,7 @@ type OutcomeRequestResult = {
   explanation: string;
   changesApplied: false;
   approvalRequired: true;
-  plan: ReturnType<typeof createHabitTrackerPlan>;
+  plan: ReturnType<typeof createDynamicTrackerPlan>;
   stagedModule: {
     moduleId: string;
     version: string;
@@ -718,23 +708,9 @@ async function createOutcomeProposal(
   }
   const stagingRoot = resolve(root, ".aimoto", "foundry", "staging");
 
-  let foundry;
-  let plan;
   const requestId = randomUUID();
-
-  if (category === "habit") {
-    foundry = createHabitTrackerFoundry(stagingRoot);
-    plan = createHabitTrackerPlan(requestId);
-  } else if (category === "task") {
-    foundry = createTaskManagerFoundry(stagingRoot);
-    plan = createTaskManagerPlan(requestId);
-  } else if (category === "research") {
-    foundry = createResearchCollectorFoundry(stagingRoot);
-    plan = createResearchCollectorPlan(requestId);
-  } else {
-    foundry = createDynamicTrackerFoundry(stagingRoot, request);
-    plan = createDynamicTrackerPlan(requestId, request);
-  }
+  const foundry = createDynamicAppFoundry(stagingRoot, request);
+  const plan = createDynamicTrackerPlan(requestId, request);
 
   const staged = await foundry.stage({ requestId, workspaceId: workspace.workspaceId, text: request }, plan);
   if (!staged.ok) {
@@ -878,29 +854,6 @@ export async function runCli(
       } else {
         throw new EngineError("InvalidInput", "records list requires a supported --module.");
       }
-    } else if (args[0] === "habit" && args[1] === "create") {
-      command = "habit.create";
-      const requestedWorkspace = option(args, "--workspace");
-      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
-      const habitId = option(args, "--id");
-      const name = option(args, "--name");
-      if (!habitId || !name) throw new EngineError("InvalidInput", "habit create requires --id and --name.");
-      result = await engine.executeHabitTrackerCommand({
-        root, command: "create-habit", input: { habitId, name }
-      });
-    } else if (args[0] === "habit" && args[1] === "log") {
-      command = "habit.log";
-      const requestedWorkspace = option(args, "--workspace");
-      const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);
-      const habitId = option(args, "--habit");
-      const entryId = option(args, "--entry");
-      const completedOn = option(args, "--date");
-      if (!habitId || !entryId || !completedOn) {
-        throw new EngineError("InvalidInput", "habit log requires --habit, --entry, and --date.");
-      }
-      result = await engine.executeHabitTrackerCommand({
-        root, command: "log-completion", input: { habitId, entryId, completedOn }
-      });
     } else if (args[0] === "snapshot") {
       const requestedWorkspace = option(args, "--workspace");
       const root = await resolveWorkspacePath(cwd, requestedWorkspace, environment);

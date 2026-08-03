@@ -21,7 +21,7 @@ function Envelope($data) { return [ordered]@{ ok = $true; data = $data } }
 function Inspect([long]$revision, [bool]$withModule = $false) {
   return Envelope ([ordered]@{
     workspaceId = "workspace-fixture"; revision = $revision
-    modules = if ($withModule) { @([ordered]@{ moduleId = "local.habit-tracker"; version = "1.0.0" }) } else { @() }
+    modules = if ($withModule) { @([ordered]@{ moduleId = "local.meditation-tracker"; version = "1.0.0" }) } else { @() }
   })
 }
 

@@ -1,6 +1,36 @@
 # Getting Started with AI-Mo-To
 
-Welcome to **AI-Mo-To**! This guide walks you through setting up your first local workspace, understanding authority modes, staging an AI-generated Habit Tracker module, approving changes, and taking safety snapshots.
+Welcome to **AI-Mo-To**! AI-Mo-To is a human-governed local workspace harness and mega-wrapper designed for AI pair-programming and tool creation.
+
+---
+
+## 🏛️ The 3-Tier Architecture
+
+AI-Mo-To is structured around three clear boundaries that guarantee safety, privacy, and full human control:
+
+```
+  ┌─────────────────────────────────────────────────────────────┐
+  │  Tier 1: Core Host Platform (Immutable Repo / Binaries)    │
+  │  • Platform engine, safety sandbox, CLI & Desktop Shell     │
+  │  • AI Agents are STRICTLY FORBIDDEN from editing Tier 1.   │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │
+  ┌──────────────────────────────▼──────────────────────────────┐
+  │  Tier 2: Generative App Lab (Foundry Staging Lab)           │
+  │  • Isolated build directory per outcome request             │
+  │  • AI writes React UI, CSS tokens, Python/Node scripts      │
+  └──────────────────────────────┬──────────────────────────────┘
+                                 │ (Human Approval & Digest Verification)
+  ┌──────────────────────────────▼──────────────────────────────┐
+  │  Tier 3: User Workspace (Documents/AI-Mo-To/Workspaces)     │
+  │  • Your actual files (.md, .pdf, .csv, .py, code)            │
+  │  • Human-governed, file-native, offline environment         │
+  └─────────────────────────────────────────────────────────────┘
+```
+
+1. **Tier 1 (Core Host Platform)**: The underlying engine, security sandbox, and desktop shell. It stays clean and immutable—AI agents never modify Tier 1 files.
+2. **Tier 2 (Generative App Lab / Foundry)**: Where the AI experiments, writes source code (React UI components, CSS design tokens, Python/Node scripts), and compiles self-contained app bundles.
+3. **Tier 3 (User Workspaces)**: Located natively in your natural system folders (e.g. `Documents/AI-Mo-To/Workspaces/`). Contains your actual files (`.md`, `.pdf`, `.csv`, code) and installed, verified app modules.
 
 ---
 
@@ -12,33 +42,18 @@ To run AI-Mo-To, you need:
 
 ---
 
-## 📦 Step 1: Open the Application or CLI
+## 🛠️ Step 1: Create Your First File-Native Workspace
 
-### Installed Application
-If you installed AI-Mo-To using the installer, launch **AI-Mo-To** from your Windows Start Menu. The desktop app will open and prompt you to select a workspace directory.
-
-### Source / Developer Checkout
-If you are developing locally, open PowerShell in the repository root and build the project once:
+Create a workspace in your natural documents directory:
 
 ```powershell
-pnpm install
-pnpm build
-```
-
----
-
-## 🛠️ Step 2: Create Your First Workspace
-
-Create a dedicated folder for your workspace:
-
-```powershell
-$workspace = Join-Path (Get-Location) "my-first-workspace"
+$workspace = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "AI-Mo-To\Workspaces\My-Workspace"
 pnpm --filter @ai-mo-to/cli aimoto workspace create "My Workspace" --root $workspace
 ```
 
-Upon creation, AI-Mo-To generates a workspace at **Revision 0** with two built-in core modules:
+Upon creation, AI-Mo-To generates a workspace at **Revision 0** with two core built-in modules:
 * **Files (`aimoto.files`)**: Local file indexing and knowledge management.
-* **Tasks (`aimoto.tasks`)**: Action item tracking and task management.
+* **Tasks (`aimoto.tasks`)**: Action item tracking and workspace task management.
 
 Inspect your workspace state at any time:
 
@@ -48,7 +63,7 @@ pnpm --filter @ai-mo-to/cli aimoto inspect --workspace $workspace
 
 ---
 
-## 🛡️ Step 3: Understanding Authority Modes
+## 🛡️ Step 2: Understanding Authority Modes
 
 AI-Mo-To operates under **5 Monotonic Authority Modes** to ensure safety:
 
@@ -62,13 +77,13 @@ AI-Mo-To operates under **5 Monotonic Authority Modes** to ensure safety:
 
 ---
 
-## 💡 Step 4: Ask for a Habit Tracker (Agent Staging Proof)
+## 💡 Step 3: Request a Custom Tool (Generative Staging)
 
-AI-Mo-To includes a deterministic, inspectable local agent proof that generates a Habit Tracker tool without requiring network requests or external API keys:
+Ask AI-Mo-To to generate a tool for an outcome you want:
 
 ```powershell
-# 1. Ask the agent for a Habit Tracker plan
-$plan = pnpm --filter @ai-mo-to/cli aimoto agent habit plan --workspace $workspace --request "Track daily meditation" --json | ConvertFrom-Json
+# 1. Ask the AI for an outcome request proposal
+$plan = pnpm --filter @ai-mo-to/cli aimoto request "I want to track meditation every day" --workspace $workspace --json | ConvertFrom-Json
 
 # 2. Inspect the generated proposal
 $plan.data.plan
@@ -80,7 +95,7 @@ Review the output. Notice two key fields:
 
 ---
 
-## ✅ Step 5: Approve and Apply the Proposal
+## ✅ Step 4: Approve and Apply the Proposal
 
 Before any state changes on disk, AI-Mo-To requires human approval binding the exact `proposalId` and `changeSetDigest`:
 
@@ -92,11 +107,11 @@ pnpm --filter @ai-mo-to/cli aimoto apply --workspace $workspace --proposal $plan
 pnpm --filter @ai-mo-to/cli aimoto inspect --workspace $workspace
 ```
 
-Your workspace will now reflect **Revision 1** and include three installed modules: **Files**, **Tasks**, and **Habit Tracker**.
+Your workspace will now reflect **Revision 1** and include your new installed dynamic module alongside **Files** and **Tasks**.
 
 ---
 
-## 📸 Step 6: Create and Recover a Safety Snapshot
+## 📸 Step 5: Create and Recover a Safety Snapshot
 
 Before making major structural updates, create a snapshot point:
 
@@ -117,11 +132,11 @@ Restoring a snapshot in AI-Mo-To follows a governed 2-step process:
 
 ## ❓ Frequently Asked Questions & Troubleshooting
 
-### Q: What happens if a proposal application fails midway?
-**A**: AI-Mo-To automatically creates an internal pre-apply snapshot before any disk write. If an error occurs during proposal execution, state is automatically rolled back to the pre-apply snapshot.
+### Q: Can an AI model modify the core AI-Mo-To application?
+**A**: No. Tier 1 (the core AI-Mo-To application repository and binaries) is strictly immutable to AI agents. The AI agent only writes code inside Tier 2 (the isolated Foundry staging directory), which is then verified and approved into Tier 3 (your workspace).
 
-### Q: Can an AI model execute arbitrary code on my PC?
-**A**: No. Modules execute in isolated host processes under strict capability declarations (`module.json`), and state-mutating commands require explicit human approval.
+### Q: Does AI-Mo-To lock my data inside a hidden database?
+**A**: No. AI-Mo-To is file-native. Your documents, notes, CSVs, and code live as normal files in your workspace directory (`Documents/AI-Mo-To/Workspaces/`). You can open, edit, and move them with any text editor or tools you love.
 
 ---
 

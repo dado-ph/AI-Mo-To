@@ -26,11 +26,10 @@ interface WorkspaceCreator extends WorkspaceInspector {
 interface DesktopWorkspaceEngine extends WorkspaceInspector {
   listBuiltInRecords(root: string, moduleId: "aimoto.files" | "aimoto.tasks"): Promise<readonly unknown[]>;
   executeBuiltInCommand(input: {
-    root: string; moduleId: "aimoto.files" | "aimoto.tasks"; command: string; input: Record<string, unknown>;
+    root: string; moduleId: string; command: string; input: Record<string, unknown>;
   }): Promise<unknown>;
   listInstalledModuleViews(root: string, moduleId: string): Promise<readonly unknown[]>;
-  listHabitTrackerRecords(root: string, collectionId: "habit" | "habit-entry"): Promise<readonly unknown[]>;
-  executeHabitTrackerCommand(input: { root: string; command: "create-habit" | "log-completion"; input: Record<string, unknown> }): Promise<unknown>;
+  listInstalledModuleRecords(root: string, moduleId: string, collectionId: string): Promise<readonly unknown[]>;
 }
 
 /** A product-owned path, stable across launches and distinct from user-selected workspaces. */
@@ -92,17 +91,13 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
       throw new Error("selectWorkspace must be provided by the Electron main process.");
     },
     inspectWorkspace: (root) => engine.inspectWorkspace(root),
-    listRecords: (root, moduleId) =>
-      (moduleId === "aimoto.research"
-        ? Promise.resolve([])
-        : engine.listBuiltInRecords(root, moduleId)) as ReturnType<DesktopApi["listRecords"]>,
+    listRecords: (root, moduleId, collectionId) =>
+      (moduleId === "aimoto.files" || moduleId === "aimoto.tasks"
+        ? engine.listBuiltInRecords(root, moduleId as "aimoto.files" | "aimoto.tasks")
+        : engine.listInstalledModuleRecords(root, moduleId, collectionId ?? "items")) as ReturnType<DesktopApi["listRecords"]>,
     executeCommand: (input) =>
-      (input.moduleId === "aimoto.research"
-        ? Promise.reject(new Error("Research command not supported"))
-        : engine.executeBuiltInCommand(input as Parameters<typeof engine.executeBuiltInCommand>[0])) as ReturnType<DesktopApi["executeCommand"]>,
+      engine.executeBuiltInCommand(input as Parameters<typeof engine.executeBuiltInCommand>[0]) as ReturnType<DesktopApi["executeCommand"]>,
     listModuleViews: (root, moduleId) => engine.listInstalledModuleViews(root, moduleId) as ReturnType<DesktopApi["listModuleViews"]>,
-    listHabitRecords: (root, collectionId) => engine.listHabitTrackerRecords(root, collectionId) as ReturnType<DesktopApi["listHabitRecords"]>,
-    executeHabitCommand: (input) => engine.executeHabitTrackerCommand(input) as ReturnType<DesktopApi["executeHabitCommand"]>,
     requestOutcome: async (root, request) => {
       let stdout = "";
       const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
@@ -172,28 +167,21 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
     await runCli(["apply", "--workspace", root, "--proposal", proposalId, "--hash", digest, "--json"], io);
     return engine.inspectWorkspace(root);
   });
-  runtime.ipcMain.handle("records:list", async (_event: unknown, root: unknown, moduleId: unknown) => {
-    if (typeof root !== "string") throw new Error("workspace root must be a string");
-    if (moduleId !== "aimoto.files" && moduleId !== "aimoto.tasks") throw new Error("unknown built-in module");
-    return engine.listBuiltInRecords(root, moduleId);
+  runtime.ipcMain.handle("records:list", async (_event: unknown, root: unknown, moduleId: unknown, collectionId?: unknown) => {
+    if (typeof root !== "string" || typeof moduleId !== "string") throw new Error("workspace root and module id must be strings");
+    if (moduleId === "aimoto.files" || moduleId === "aimoto.tasks") {
+      return engine.listBuiltInRecords(root, moduleId);
+    }
+    return engine.listInstalledModuleRecords(root, moduleId, typeof collectionId === "string" ? collectionId : "items");
   });
   runtime.ipcMain.handle("records:execute", async (_event: unknown, input: unknown) => {
     if (!input || typeof input !== "object") throw new Error("command input must be an object");
     const command = input as Parameters<DesktopWorkspaceEngine["executeBuiltInCommand"]>[0];
-    if (command.moduleId !== "aimoto.files" && command.moduleId !== "aimoto.tasks") throw new Error("unknown built-in module");
     return engine.executeBuiltInCommand(command);
   });
   runtime.ipcMain.handle("module:views", async (_event: unknown, root: unknown, moduleId: unknown) => {
     if (typeof root !== "string" || typeof moduleId !== "string") throw new Error("workspace root and module id must be strings");
     return engine.listInstalledModuleViews(root, moduleId);
-  });
-  runtime.ipcMain.handle("habits:list", async (_event: unknown, root: unknown, collectionId: unknown) => {
-    if (typeof root !== "string" || (collectionId !== "habit" && collectionId !== "habit-entry")) throw new Error("invalid Habit Tracker record request");
-    return engine.listHabitTrackerRecords(root, collectionId);
-  });
-  runtime.ipcMain.handle("habits:execute", async (_event: unknown, input: unknown) => {
-    if (!input || typeof input !== "object") throw new Error("command input must be an object");
-    return engine.executeHabitTrackerCommand(input as Parameters<DesktopWorkspaceEngine["executeHabitTrackerCommand"]>[0]);
   });
 }
 

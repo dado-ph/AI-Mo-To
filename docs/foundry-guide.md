@@ -1,24 +1,24 @@
-# AI-Mo-To Foundry guide
+# AI-Mo-To Foundry Guide
 
-The Foundry is the reasoning and engineering guide supplied to a coding agent
-when AI-Mo-To asks it to create an application. It is not a catalogue of
-complete products: requests may require novel source code, algorithms, data
-models, and interactions.
+The Foundry is the reasoning and engineering harness supplied to coding agents when AI-Mo-To asks them to create an application. It is not a catalogue of fixed templates: requests may require novel source code, algorithms, data models, and custom interactions.
 
-The guide is supplied with the user request and an isolated generated-app
-repository. The agent may create novel code there while following the default
-stack, UX principles, capability rules, and verification requirements.
-AI-Mo-To owns repository allocation, validation, proposal digests, approval,
-and installation; the agent never edits the AI-Mo-To product repository.
+---
 
-The workspace itself is also usually generated around the person's need. It is
-not required to contain a permanent Files-and-Tasks shell or to share one
-application layout with every other workspace. The Foundry supplies the common
-substrate—authority and capability visibility, provenance, health, recovery,
-and a dependable route to the installed application—while the agent determines
-the useful home view, navigation, data surfaces, and interactions for that
-workspace. Similarity should come from shared quality and trust principles,
-not from forcing unrelated products into the same dashboard.
+## 🏛️ The 3-Tier Boundary Contract
 
-The canonical programmatic context is exported by `@ai-mo-to/foundry` as
-`FOUNDRY_GUIDE` and `createFoundryContext`.
+1. **Tier 1 (Core Host Platform)**: The AI agent is **strictly forbidden** from editing the core AI-Mo-To product repository (`packages/`, `apps/`). The platform harness owns security, permission checks, static validation, proposal digests, and execution.
+2. **Tier 2 (Generative App Lab / Staging)**: The agent receives an allocated, isolated app directory. The agent authors React UI components, shadcn-inspired UI primitives, CSS design token values (`--background`, `--foreground`, `--primary`, `--card`, `--radius`), Python/Node scripts, and a valid `module.json` manifest.
+3. **Tier 3 (User Workspace)**: The human-governed file environment (`Documents/AI-Mo-To/Workspaces/`). User files (`.md`, `.pdf`, `.csv`, code) are primary. Approved app bundles are installed into `.aimoto/modules/` inside the workspace and run under explicit capability governance.
+
+---
+
+## 🎨 UI/UX & Design Philosophy
+
+* **No Hardcoded Themes**: AI-Mo-To provides standard CSS token variable slots (`--background`, `--foreground`, `--primary`, `--card`, `--border`, `--radius`). As the AI designer, infer the user's intent and author custom color palettes, typography, and visual aesthetics directly.
+* **Shadcn UI Primitives**: Compose views using semantic, keyboard-accessible component primitives (`Button`, `Card`, `Dialog`, `Input`, `Badge`, `Table`, `Tabs`).
+
+---
+
+## 🛠️ Programmatic API Context
+
+The canonical programmatic context is exported by `@ai-mo-to/foundry` as `FOUNDRY_GUIDE` and `createFoundryContext`.

@@ -4,25 +4,11 @@ export {
   proposalToModuleInstallChangeSet,
 } from "./changeset.js";
 export { Foundry, type FoundryHooks } from "./foundry.js";
+
 export {
-  HABIT_TRACKER_MODULE_ID,
-  createHabitTrackerBundle,
-  createHabitTrackerFoundry,
-  createHabitTrackerPlan,
-} from "./habit-tracker.js";
-export {
-  TASK_MANAGER_MODULE_ID,
-  createTaskManagerBundle,
-  createTaskManagerFoundry,
-  createTaskManagerPlan,
-} from "./task-manager.js";
-export {
-  RESEARCH_COLLECTOR_MODULE_ID,
-  createResearchCollectorBundle,
-  createResearchCollectorFoundry,
-  createResearchCollectorPlan,
-} from "./research-collector.js";
-export {
+  createDynamicAppBundle,
+  createDynamicAppFoundry,
+  createDynamicAppPlan,
   createDynamicTrackerBundle,
   createDynamicTrackerFoundry,
   createDynamicTrackerPlan,

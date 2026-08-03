@@ -75,12 +75,9 @@ kind passes generic schema validation.
 `@ai-mo-to/storage` exposes lower-level `WorkspaceStore` and layout/path helpers.
 It is for local SQLite access; callers creating a store must call `close()`.
 
-## Foundry and the built-in Habit Tracker
+## Foundry and Generative Modules
 
-`Foundry` needs caller-supplied hooks and has no generic model provider or
-registry. The CLI includes one deliberate reference flow: `aimoto agent habit
-plan` uses a deterministic local generator to prepare a Habit Tracker proposal,
-which must still be approved through the engine. `FoundryRequest` is
+`Foundry` provides the module generation and staging pipeline. `FoundryRequest` is
 `{ requestId, workspaceId, text }`; a
 `ModulePlan` adds module ID/display name, outcomes, records, views, commands,
 events, and requested capabilities. A successful generated result contains an

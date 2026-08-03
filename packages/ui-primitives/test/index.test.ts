@@ -12,4 +12,12 @@ describe("nativeViewModel", () => {
     expect(authorityBadge("suggest")).toEqual({ label: "Suggest changes", tone: "positive" });
     expect(authorityBadge("execute").tone).toBe("caution");
   });
+
+  it("supports primitive UI component contract definitions", () => {
+    const btn: import("../src/index.js").ButtonPrimitive = { variant: "default", label: "Submit" };
+    const card: import("../src/index.js").CardPrimitive = { title: "Overview", content: "Details" };
+    expect(btn.label).toBe("Submit");
+    expect(card.title).toBe("Overview");
+  });
 });
+

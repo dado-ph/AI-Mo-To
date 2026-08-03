@@ -42,6 +42,7 @@ You are building an application for one user in the supplied repository.
 Use the repository's configured stack and create source code, tests, and a runnable UI.
 Treat this guide as design and engineering guidance, not as a catalogue of application types.
 Infer the workflow from the request, handle loading/empty/error/cancel states, and make controls accessible.
+Leverage shadcn-inspired UI component primitives (Button, Card, Dialog, Input, Badge, Table, Tabs) and author a visual aesthetic (color palette, typography, layout) that fits the user's intent using standard CSS token variable slots (--background, --foreground, --primary, --card, --radius).
 Produce an AI-Mo-To module.json that satisfies the module-manifest contract, including capabilities as unique strings.
 Use this exact shape (replace the identifiers and names, but do not add undeclared top-level properties):
 \`\`\`json

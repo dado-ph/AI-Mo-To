@@ -5,9 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   Foundry,
   FoundryProposalConversionError,
-  createHabitTrackerBundle,
-  createHabitTrackerFoundry,
-  createHabitTrackerPlan,
+  createDynamicTrackerBundle,
+  createDynamicTrackerFoundry,
+  createDynamicTrackerPlan,
   digestBundle,
   proposalToModuleInstallChangeSet,
   verifyStagedModule,
@@ -49,19 +49,20 @@ describe("Foundry staging", () => {
     expect(context).toContain("C:/tmp/app/aimoto.manifest.json");
     expect(context).not.toContain("habit tracker");
   });
-  it("generates the same locally validated Habit Tracker bundle for the no-key agent proof", async () => {
+  it("generates the same locally validated dynamic tracker bundle for the no-key agent proof", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "aimoto-habit-proof-"));
-    const first = createHabitTrackerBundle();
-    const second = createHabitTrackerBundle();
+    const plan = createDynamicTrackerPlan("request-local-habit-proof", "Track meditation");
+    const first = createDynamicTrackerBundle(plan);
+    const second = createDynamicTrackerBundle(plan);
     expect(digestBundle(first.files)).toBe(digestBundle(second.files));
 
-    const staged = await createHabitTrackerFoundry(path.join(root, "staging")).stage(
+    const staged = await createDynamicTrackerFoundry(path.join(root, "staging"), "Track meditation").stage(
       { requestId: "request-local-habit-proof", workspaceId: "workspace-1", text: "Track meditation" },
-      createHabitTrackerPlan("request-local-habit-proof"),
+      plan,
     );
     expect(staged).toMatchObject({
       ok: true,
-      proposal: { kind: "install-generated", module: { moduleId: "local.habit-tracker" } },
+      proposal: { kind: "install-generated", module: { moduleId: expect.stringMatching(/^local\./) } },
     });
   });
 
@@ -218,29 +219,31 @@ describe("Foundry staging", () => {
     })).toThrow(FoundryProposalConversionError);
   });
 
-  it("stages a Task Manager module for task outcomes", async () => {
+  it("stages a dynamic module for task outcomes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "aimoto-task-proof-"));
-    const { createTaskManagerFoundry, createTaskManagerPlan } = await import("../src/index.js");
-    const staged = await createTaskManagerFoundry(path.join(root, "staging")).stage(
-      { requestId: "req-task", workspaceId: "ws-task", text: "Manage project todos" },
-      createTaskManagerPlan("req-task"),
+    const text = "Manage project todos";
+    const plan = createDynamicTrackerPlan("req-task", text);
+    const staged = await createDynamicTrackerFoundry(path.join(root, "staging"), text).stage(
+      { requestId: "req-task", workspaceId: "ws-task", text },
+      plan,
     );
     expect(staged).toMatchObject({
       ok: true,
-      proposal: { kind: "install-generated", module: { moduleId: "local.task-manager" } },
+      proposal: { kind: "install-generated", module: { moduleId: expect.stringMatching(/^local\./) } },
     });
   });
 
-  it("stages a Research Collector module for research/notes outcomes", async () => {
+  it("stages a dynamic module for research/notes outcomes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "aimoto-research-proof-"));
-    const { createResearchCollectorFoundry, createResearchCollectorPlan } = await import("../src/index.js");
-    const staged = await createResearchCollectorFoundry(path.join(root, "staging")).stage(
-      { requestId: "req-research", workspaceId: "ws-research", text: "Save paper notes" },
-      createResearchCollectorPlan("req-research"),
+    const text = "Save paper notes";
+    const plan = createDynamicTrackerPlan("req-research", text);
+    const staged = await createDynamicTrackerFoundry(path.join(root, "staging"), text).stage(
+      { requestId: "req-research", workspaceId: "ws-research", text },
+      plan,
     );
     expect(staged).toMatchObject({
       ok: true,
-      proposal: { kind: "install-generated", module: { moduleId: "local.research-collector" } },
+      proposal: { kind: "install-generated", module: { moduleId: expect.stringMatching(/^local\./) } },
     });
   });
 

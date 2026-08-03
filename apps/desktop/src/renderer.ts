@@ -9,9 +9,7 @@ function authorityBadge(mode: string): { label: string; tone: "positive" | "neut
 const rendererViews: DesktopScreen["views"] = [];
 
 function screenFor(workspace?: NonNullable<DesktopScreen["workspace"]>): DesktopScreen {
-  const records = { files: [], tasks: [] };
-  const generated = { generatedViews: [], habitRecords: { habits: [], entries: [] } };
-  if (!workspace) return { views: rendererViews, records, ...generated };
+  if (!workspace) return { views: rendererViews, generatedViews: [] };
 
   const badge = authorityBadge(workspace.authorityMode);
   return {
@@ -21,8 +19,7 @@ function screenFor(workspace?: NonNullable<DesktopScreen["workspace"]>): Desktop
       label: badge.label,
       tone: badge.tone
     },
-    records,
-    ...generated
+    generatedViews: []
   };
 }
 

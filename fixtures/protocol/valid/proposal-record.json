@@ -10,9 +10,9 @@
     "baseRevision": 0,
     "createdAt": "2026-07-29T00:00:00.000Z",
     "operations": [{
-      "operationId": "install-habit-tracker",
+      "operationId": "install-custom-tool",
       "kind": "module.install",
-      "input": { "moduleId": "ai-mo-to.habit-tracker", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+      "input": { "moduleId": "local.custom-tool", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
       "preconditions": [{ "kind": "workspace.revision", "value": 0 }],
       "effects": ["workspace.composition.write"],
       "reversibility": "reversible"

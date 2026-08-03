@@ -55,35 +55,34 @@ The final inspection should report `revision: 1` and `authorityMode: "build"`.
 Use `--principal <id>` on `apply` to record a supplied approver identifier;
 without it the engine records `local-user`.
 
-## Try the agent-driven Habit Tracker proof
+## Try an outcome request
 
 This is the complete local product path. It needs no account, API key, or
 network request. Your words are shown back to you as the request; the
-deterministic reference generator creates a small, inspectable Habit Tracker
-with habits, daily check-ins, and completion history.
+generative harness stages a self-contained mini-app module tailored to your outcome.
 
 ```powershell
-pnpm --filter @ai-mo-to/cli aimoto workspace create "My Habits" --root ./my-habits --json
-$review = pnpm --filter @ai-mo-to/cli aimoto agent habit plan --workspace ./my-habits --request "I want to track meditation every day" --json | ConvertFrom-Json
+pnpm --filter @ai-mo-to/cli aimoto workspace create "My Workspace" --root ./my-workspace --json
+$review = pnpm --filter @ai-mo-to/cli aimoto request "I want to track meditation every day" --workspace ./my-workspace --json | ConvertFrom-Json
 
 # Read $review.data.plan and $review.data.proposal before continuing.
 $proposalId = $review.data.proposal.proposalId
 $digest = $review.data.proposal.changeSetDigest
-pnpm --filter @ai-mo-to/cli aimoto apply --workspace ./my-habits --proposal $proposalId --hash $digest --json
-pnpm --filter @ai-mo-to/cli aimoto inspect --workspace ./my-habits --json
+pnpm --filter @ai-mo-to/cli aimoto apply --workspace ./my-workspace --proposal $proposalId --hash $digest --json
+pnpm --filter @ai-mo-to/cli aimoto inspect --workspace ./my-workspace --json
 ```
 
 Before approval, the review describes the records and views the module adds,
 the capabilities it requests, its staged location, and the exact SHA-256
 bundle digest. `apply` checks that digest and the workspace revision before it
 copies the verified module into the workspace. If you change the digest or the
-workspace advances, it is not installed; run the plan again and review the new
+workspace advances, it is not installed; run the request again and review the new
 proposal.
 
 For a readable review instead of JSON, omit `--json`:
 
 ```sh
-pnpm --filter @ai-mo-to/cli aimoto agent habit plan --workspace ./my-habits --request "Track my daily habits"
+pnpm --filter @ai-mo-to/cli aimoto request "Track my daily habits" --workspace ./my-workspace
 ```
 
 ## Commands
@@ -94,15 +93,13 @@ aimoto workspace create "<name>" [--root <path>] [--json]
 aimoto doctor [--workspace <path>] [--json]
 aimoto inspect [--workspace <path>] [--json]
 aimoto module views --module <id> [--workspace <path>] [--json]
-aimoto records list --module <aimoto.files|aimoto.tasks|local.habit-tracker> [--collection <habit|habit-entry>] [--workspace <path>] [--json]
-aimoto habit create --id <id> --name "<name>" [--workspace <path>] [--json]
-aimoto habit log --habit <id> --entry <id> --date <YYYY-MM-DD> [--workspace <path>] [--json]
+aimoto records list --module <id> [--collection <id>] [--workspace <path>] [--json]
 aimoto snapshot create [--workspace <path>] [--json]
 aimoto snapshot list [--workspace <path>] [--json]
 aimoto snapshot inspect <snapshot-id> [--workspace <path>] [--json]
 aimoto snapshot restore-plan <snapshot-id> [--workspace <path>] [--json]
 aimoto snapshot restore-propose <snapshot-id> [--workspace <path>] [--json]
-aimoto agent habit plan --workspace <path> [--request "what you need"] [--json]
+aimoto request "<ordinary need>" --workspace <path> [--json]
 aimoto plan --workspace <path> --set-authority <mode> [--json]
 aimoto apply --workspace <path> --proposal <id> --hash <sha256:digest> [--principal <id>] [--json]
 aimoto open [--workspace <path>] [--json]
@@ -155,31 +152,16 @@ the restore. It creates a new revision; it never replaces the old revision
 history. If the workspace changes after the proposal is created, approval is
 rejected as stale and you must propose the restore again.
 
-## Verify and use an installed Habit Tracker
+## Verify and use an installed module
 
-After the reviewed Habit Tracker proposal has been applied, an agent can verify
-the installed UI declarations and local records without executing generated
-module code:
+After a reviewed proposal has been applied, an agent can verify the installed UI declarations and local records without executing generated module code:
 
 ```powershell
-aimoto module views --module local.habit-tracker --workspace ./my-habits --json
-aimoto records list --module local.habit-tracker --collection habit --workspace ./my-habits --json
-aimoto records list --module local.habit-tracker --collection habit-entry --workspace ./my-habits --json
+aimoto module views --module local.my-app --workspace ./my-workspace --json
+aimoto records list --module local.my-app --collection items --workspace ./my-workspace --json
 ```
 
-Record creation is a normal interaction with an already approved tool, not
-approval to install or change that tool. An agent must run these commands only
-after the user explicitly asks it to create or log the named habit:
-
-```powershell
-aimoto habit create --id meditation --name "Meditation" --workspace ./my-habits --json
-aimoto habit log --habit meditation --entry meditation-2026-07-29 --date 2026-07-29 --workspace ./my-habits --json
-```
-
-IDs are caller-selected stable identifiers. Logging requires an existing habit
-and an ISO calendar date. Duplicate IDs are rejected. `records list` is
-read-only and is also available for the installed `aimoto.files` and
-`aimoto.tasks` built-ins; their collection is inferred from the module.
+`records list` is read-only and is available for all installed modules and built-ins.
 
 Run `aimoto`, `aimoto help`, or `aimoto --help` for the short usage display.
 Use `aimoto --help --json` when a program or coding agent is discovering the
@@ -201,14 +183,12 @@ the envelope shape. Human-mode errors go to standard error as `Code: message`.
 | `inspect` | The same workspace inspection shape |
 | `module views` | Validated, inert view summaries from the installed module bundle |
 | `records list` | Local records for the selected supported module and collection |
-| `habit create` | The created Habit Tracker habit record |
-| `habit log` | The created completion-entry record |
 | `snapshot create` | Snapshot ID, creation time, and verified digest |
 | `snapshot list` | Available snapshot summaries |
 | `snapshot inspect` | Verification result and captured recovery metadata |
 | `snapshot restore-plan` | Non-destructive recovery plan |
 | `snapshot restore-propose` | Pending digest-bound proposal that restores the captured workspace configuration as a new revision |
-| `agent habit plan` | Request, plain-language Habit Tracker plan, staged module details, and a pending digest-bound proposal |
+| `request` | Request, outcome plan, staged module details, and a pending digest-bound proposal |
 | `plan` | Proposal: `proposalId`, `workspaceId`, `baseRevision`, `changeSet`, `changeSetDigest`, `status`, `createdAt` |
 | `apply` | The resulting workspace inspection shape |
 | `open` | Launch result and the inspected workspace passed to the desktop |

@@ -15,8 +15,6 @@ export function exposeDesktopApi(bridge: ElectronBridge): void {
     listRecords: (root, moduleId) => bridge.ipcRenderer.invoke("records:list", root, moduleId) as ReturnType<DesktopApi["listRecords"]>,
     executeCommand: (input) => bridge.ipcRenderer.invoke("records:execute", input) as ReturnType<DesktopApi["executeCommand"]>,
     listModuleViews: (root, moduleId) => bridge.ipcRenderer.invoke("module:views", root, moduleId) as ReturnType<DesktopApi["listModuleViews"]>,
-    listHabitRecords: (root, collectionId) => bridge.ipcRenderer.invoke("habits:list", root, collectionId) as ReturnType<DesktopApi["listHabitRecords"]>,
-    executeHabitCommand: (input) => bridge.ipcRenderer.invoke("habits:execute", input) as ReturnType<DesktopApi["executeHabitCommand"]>,
     requestOutcome: (root, request) => bridge.ipcRenderer.invoke("workspace:request", root, request) as ReturnType<DesktopApi["requestOutcome"]>,
     applyProposal: (root, proposalId, digest) => bridge.ipcRenderer.invoke("workspace:apply", root, proposalId, digest) as ReturnType<DesktopApi["applyProposal"]>
   };
