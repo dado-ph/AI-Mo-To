@@ -119,9 +119,10 @@ describe("desktop shell", () => {
     expect(installerInclude).toContain("Microsoft\\WindowsApps\\aimoto.cmd");
     expect(installerInclude).toContain('powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\\aimoto-launcher.ps1" %*');
     expect(launcher).toContain('& $executable --cli @CliArguments');
-    expect(launcher.match(/^\s*\$startInfo\.UseShellExecute\s*=\s*\$(?:true|false)\s*$/gim)).toEqual([
-      "  $startInfo.UseShellExecute = $true"
-    ]);
+    expect(
+      [...launcher.matchAll(/^[\t ]*\$startInfo\.UseShellExecute[\t ]*=[\t ]*\$(?:true|false)[\t ]*\r?$/gim)]
+        .map(match => match[0].trim())
+    ).toEqual(["$startInfo.UseShellExecute = $true"]);
     expect(launcher).toContain("$canonicalWorkspace.Contains");
     expect(launcher).toContain("$quotedWorkspace = $canonicalWorkspace -replace");
     expect(launcher).toContain("$startInfo.Arguments = '--workspace \"'");

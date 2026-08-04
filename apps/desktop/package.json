@@ -1,6 +1,6 @@
 {
   "name": "@ai-mo-to/desktop",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "private": true,
   "description": "AI-Mo-To, a local-first desktop workspace application.",
   "author": "AI-Mo-To contributors",
