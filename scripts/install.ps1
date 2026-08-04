@@ -88,9 +88,14 @@ if (-not $installerPath) {
   try {
     $headers = @{ Accept = "application/vnd.github+json"; "User-Agent" = "AI-Mo-To-Installer" }
     if ($selectedReleaseChannel -eq "Prerelease") {
-      $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/dado-ph/AI-Mo-To/releases?per_page=100" |
-        Where-Object { $_.prerelease -and -not $_.draft } |
-        Select-Object -First 1
+      $release = $null
+      $publishedReleases = @(Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/dado-ph/AI-Mo-To/releases?per_page=100")
+      foreach ($candidateRelease in $publishedReleases) {
+        if ($candidateRelease.prerelease -eq $true -and $candidateRelease.draft -ne $true) {
+          $release = $candidateRelease
+          break
+        }
+      }
     } else {
       $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/dado-ph/AI-Mo-To/releases/latest"
     }
