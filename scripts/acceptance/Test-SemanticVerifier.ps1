@@ -17,6 +17,14 @@ function Write-Json([string]$relative, $value) {
   New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
   $value | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path -Encoding utf8
 }
+function Get-Sha256([string]$path) {
+  $hasher = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return ([System.BitConverter]::ToString($hasher.ComputeHash([System.IO.File]::ReadAllBytes($path))) -replace "-", "").ToLowerInvariant()
+  } finally {
+    $hasher.Dispose()
+  }
+}
 function Envelope($data) { return [ordered]@{ ok = $true; data = $data } }
 function Inspect([long]$revision, [bool]$withModule = $false) {
   return Envelope ([ordered]@{
@@ -33,7 +41,7 @@ $snapshotId = "sha256:" + ("c" * 64)
 Write-Json "manifest.json" ([ordered]@{
   schemaVersion = 2; runId = "fixture"; startedAt = "2026-07-29T00:00:00Z"
   isolationRoot = $validRoot; workspaceRoot = $workspace; repositoryRoot = $repository
-  artifact = @{ path = $artifact; sha256 = (Get-FileHash $artifact -Algorithm SHA256).Hash.ToLowerInvariant() }
+  artifact = @{ path = $artifact; sha256 = Get-Sha256 $artifact }
   phases = @{}
 })
 Write-Json "journey/session.json" ([ordered]@{
