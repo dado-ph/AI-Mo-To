@@ -1,13 +1,6 @@
-[CmdletBinding()]
-param(
-  [switch] $UseLocalBuild,
-  [Alias("ReleaseChannel")]
-  [ValidateSet("Stable", "Prerelease")]
-  [string] $AI_MO_TO_ReleaseChannel
-)
-
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$useLocalBuild = $env:AI_MO_TO_USE_LOCAL_BUILD -eq "1"
 
 function Write-InstallerBanner {
   Write-Host ""
@@ -19,7 +12,13 @@ function Write-InstallerBanner {
 }
 
 function Select-ReleaseChannel {
-  if ($AI_MO_TO_ReleaseChannel) { return $AI_MO_TO_ReleaseChannel }
+  $requestedReleaseChannel = [string]$env:AI_MO_TO_RELEASE_CHANNEL
+  if ($requestedReleaseChannel) {
+    if ($requestedReleaseChannel -notin @("Stable", "Prerelease")) {
+      throw "AI_MO_TO_RELEASE_CHANNEL must be Stable or Prerelease."
+    }
+    return $requestedReleaseChannel
+  }
 
   Write-Host "  Choose the release channel:" -ForegroundColor White
   Write-Host "    [1] Latest stable release     Recommended for everyday use" -ForegroundColor Green
@@ -35,7 +34,7 @@ function Select-ReleaseChannel {
 }
 
 Write-InstallerBanner
-$selectedReleaseChannel = if ($UseLocalBuild) { "Local build" } else { Select-ReleaseChannel }
+$selectedReleaseChannel = if ($useLocalBuild) { "Local build" } else { Select-ReleaseChannel }
 Write-Host "[AI-Mo-To] Release channel: $selectedReleaseChannel" -ForegroundColor Cyan
 
 # 1. Detect existing installation across Registry, default AppData, or PATH
@@ -65,7 +64,7 @@ if ($isUpdate) {
 $installerPath = $null
 $isLocalBuild = $false
 
-if ($UseLocalBuild) {
+if ($useLocalBuild) {
   $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
   $repoReleaseDir = Join-Path (Split-Path -Parent $scriptDir) "apps\desktop\release"
   $localInstaller = Get-ChildItem -Path $repoReleaseDir -Filter "AI-Mo-To-Setup-*-x64.exe" -ErrorAction SilentlyContinue |
