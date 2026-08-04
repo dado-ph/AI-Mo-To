@@ -13,9 +13,9 @@ pnpm --filter @ai-mo-to/desktop dist
 ```
 
 The output is `apps/desktop/release/AI-Mo-To-Setup-<version>-<arch>.exe`.
-The `desktop-installer` workflow builds the same artifact on Windows for pull
-requests and `main`, then retains it only as a CI artifact. It does not
-publish a release.
+The Windows release-readiness workflow builds the same artifact for pull
+requests and `main`, then retains it for human review. It does not publish a
+release.
 
 The project does not currently automate publishing. That is intentional: a
 maintainer must explicitly choose distribution targets and credentials when
