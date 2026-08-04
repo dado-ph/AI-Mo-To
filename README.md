@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dado-ph/AI-Mo-To/actions/workflows/ci.yml"><img src="https://github.com/dado-ph/AI-Mo-To/actions/workflows/ci.yml/badge.svg" alt="Continuous integration status" /></a>
+  <a href="https://github.com/dado-ph/AI-Mo-To/actions/workflows/product-confidence.yml"><img src="https://github.com/dado-ph/AI-Mo-To/actions/workflows/product-confidence.yml/badge.svg" alt="Product confidence status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0 license" /></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" alt="Node.js 22 or later" /></a>
   <a href="https://pnpm.io/"><img src="https://img.shields.io/badge/pnpm-11-F69220?logo=pnpm&logoColor=white" alt="pnpm 11" /></a>

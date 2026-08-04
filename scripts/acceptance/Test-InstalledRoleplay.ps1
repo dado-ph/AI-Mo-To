@@ -57,6 +57,14 @@ function Record-Id($value) {
   return ""
 }
 function Canonical($value) { return ($value | ConvertTo-Json -Depth 30 -Compress) }
+function Get-Sha256([string]$path) {
+  $hasher = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return ([System.BitConverter]::ToString($hasher.ComputeHash([System.IO.File]::ReadAllBytes($path))) -replace "-", "").ToLowerInvariant()
+  } finally {
+    $hasher.Dispose()
+  }
+}
 
 $manifest = Read-Json "manifest.json"
 if ($null -eq $manifest) { exit 1 }
@@ -65,7 +73,7 @@ Require (-not ([string]$manifest.isolationRoot).StartsWith([string]$manifest.rep
 Require (([System.IO.Path]::GetFullPath([string]$manifest.workspaceRoot)).StartsWith(([System.IO.Path]::GetFullPath([string]$manifest.isolationRoot)), [System.StringComparison]::OrdinalIgnoreCase)) "Workspace is not inside the fresh isolation root."
 Require (Test-Path -LiteralPath $manifest.artifact.path -PathType Leaf) "Recorded installer artifact is missing."
 if (Test-Path -LiteralPath $manifest.artifact.path -PathType Leaf) {
-  Require ((Get-FileHash -LiteralPath $manifest.artifact.path -Algorithm SHA256).Hash -eq $manifest.artifact.sha256) "Installer artifact digest changed."
+  Require ((Get-Sha256 $manifest.artifact.path) -eq $manifest.artifact.sha256) "Installer artifact digest changed."
 }
 $installResult = Read-Json "install/result.json"
 $pathResilience = Read-Json "install/path-resilience.json"
@@ -239,7 +247,7 @@ if (-not $SkipRepositoryCheck) {
   if ($before) {
     $after = @(Get-ChildItem -LiteralPath $manifest.repositoryRoot -File -Recurse |
       Where-Object { $_.FullName -notmatch '[\\/](node_modules|\.git|dist|coverage|release[^\\/]*)[\\/]' } |
-      Get-FileHash -Algorithm SHA256 | Select-Object Path, Hash)
+      ForEach-Object { [pscustomobject]@{ Path = $_.FullName; Hash = Get-Sha256 $_.FullName } })
     $beforeMap = @{}; foreach ($entry in @($before)) { $beforeMap[$entry.Path] = $entry.Hash }
     $afterMap = @{}; foreach ($entry in $after) { $afterMap[$entry.Path] = $entry.Hash }
     Require (($beforeMap.Keys | Where-Object { -not $afterMap.ContainsKey($_) -or $afterMap[$_] -ne $beforeMap[$_] }).Count -eq 0) "Source repository files changed during acceptance."

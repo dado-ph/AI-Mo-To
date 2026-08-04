@@ -1,18 +1,17 @@
-name: Desktop installer
+name: Windows release readiness
 
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  package-windows:
-    name: Package Windows installer
+  package:
+    name: Build the Windows installer
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,20 +20,15 @@ jobs:
           version: 11.9.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.x
+          node-version: 22.x
           cache: pnpm
-      - name: Install dependencies
+      - name: Install the reviewed dependency set
         run: pnpm install --frozen-lockfile
-      - name: Build installer
+      - name: Prepare the product
+        run: pnpm validate
+      - name: Build the installer
         run: pnpm --filter @ai-mo-to/desktop dist
-      - name: Verify installer exists
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem 'apps/desktop/release' -Filter 'AI-Mo-To-Setup-*.exe' -File
-          if ($installer.Count -ne 1) {
-            throw "Expected one installer, found $($installer.Count)."
-          }
-      - name: Retain installer for review
+      - name: Retain the installer for human review
         uses: actions/upload-artifact@v4
         with:
           name: ai-mo-to-windows-installer

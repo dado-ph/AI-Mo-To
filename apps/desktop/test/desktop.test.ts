@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -48,6 +48,17 @@ describe("desktop shell", () => {
     expect(html).toContain('href="./tokens.css"');
     expect(copyScript).toContain('const tokensDestination = resolve(appRoot, "dist", "tokens.css")');
     expect(copyScript).toContain("await cp(tokensSource, tokensDestination)");
+  });
+
+  it("uses the packaged AI-Mo-To mark in the in-app header", async () => {
+    const renderer = await readFile(
+      fileURLToPath(new URL("../src/renderer-app.tsx", import.meta.url)),
+      "utf8"
+    );
+
+    expect(renderer).toContain('const appIcon = new URL("../build/icon.png", import.meta.url).href');
+    expect(renderer).toContain('<img src={appIcon} alt=""');
+    expect(renderer).not.toContain("Sparkles");
   });
 
   it("uses one deterministic product-owned default workspace", async () => {
@@ -108,9 +119,10 @@ describe("desktop shell", () => {
     expect(installerInclude).toContain("Microsoft\\WindowsApps\\aimoto.cmd");
     expect(installerInclude).toContain('powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\\aimoto-launcher.ps1" %*');
     expect(launcher).toContain('& $executable --cli @CliArguments');
-    expect(launcher.match(/^\s*\$startInfo\.UseShellExecute\s*=\s*\$(?:true|false)\s*$/gim)).toEqual([
-      "  $startInfo.UseShellExecute = $true"
-    ]);
+    expect(
+      [...launcher.matchAll(/^[\t ]*\$startInfo\.UseShellExecute[\t ]*=[\t ]*\$(?:true|false)[\t ]*\r?$/gim)]
+        .map(match => match[0].trim())
+    ).toEqual(["$startInfo.UseShellExecute = $true"]);
     expect(launcher).toContain("$canonicalWorkspace.Contains");
     expect(launcher).toContain("$quotedWorkspace = $canonicalWorkspace -replace");
     expect(launcher).toContain("$startInfo.Arguments = '--workspace \"'");
@@ -119,6 +131,20 @@ describe("desktop shell", () => {
     expect(installerInclude).toContain('WriteRegStr HKCU "Software\\AI-Mo-To" "InstallPath" "$INSTDIR"');
     expect(installerInclude).toContain('Delete "$LOCALAPPDATA\\Microsoft\\WindowsApps\\aimoto.cmd"');
     expect(installerInclude).toContain('DeleteRegValue HKCU "Software\\AI-Mo-To" "InstallPath"');
+  });
+
+  it("ships branded NSIS panels for the guided installer", async () => {
+    const packageJson = JSON.parse(await readFile(
+      fileURLToPath(new URL("../package.json", import.meta.url)),
+      "utf8"
+    )) as { build: { nsis: Record<string, string> } };
+    const desktopRoot = fileURLToPath(new URL("..", import.meta.url));
+
+    expect(packageJson.build.nsis.installerSidebar).toBe("build/installer-sidebar.bmp");
+    expect(packageJson.build.nsis.uninstallerSidebar).toBe("build/installer-sidebar.bmp");
+    expect(packageJson.build.nsis.installerHeader).toBe("build/installer-header.bmp");
+    await expect(stat(join(desktopRoot, "build", "installer-sidebar.bmp"))).resolves.toMatchObject({ size: expect.any(Number) });
+    await expect(stat(join(desktopRoot, "build", "installer-header.bmp"))).resolves.toMatchObject({ size: expect.any(Number) });
   });
 
   it("flushes redirected CLI output and terminates its Electron host promptly", async () => {

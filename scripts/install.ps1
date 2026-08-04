@@ -1,10 +1,41 @@
 [CmdletBinding()]
 param(
-  [switch] $UseLocalBuild
+  [switch] $UseLocalBuild,
+  [ValidateSet("Stable", "Prerelease")]
+  [string] $ReleaseChannel
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+function Write-InstallerBanner {
+  Write-Host ""
+  Write-Host "  +--------------------------------------------------------+" -ForegroundColor DarkCyan
+  Write-Host "  |                  A I - M O - T O                     |" -ForegroundColor Cyan
+  Write-Host "  |       Local workspaces. Human-approved changes.       |" -ForegroundColor DarkGray
+  Write-Host "  +--------------------------------------------------------+" -ForegroundColor DarkCyan
+  Write-Host ""
+}
+
+function Select-ReleaseChannel {
+  if ($ReleaseChannel) { return $ReleaseChannel }
+
+  Write-Host "  Choose the release channel:" -ForegroundColor White
+  Write-Host "    [1] Latest stable release     Recommended for everyday use" -ForegroundColor Green
+  Write-Host "    [2] Latest prerelease         Early testing build" -ForegroundColor Yellow
+  $selection = Read-Host "  Enter 1 or 2 (default: 1)"
+
+  switch ($selection) {
+    "" { return "Stable" }
+    "1" { return "Stable" }
+    "2" { return "Prerelease" }
+    default { throw "Choose 1 for the latest stable release or 2 for the latest prerelease." }
+  }
+}
+
+Write-InstallerBanner
+$selectedReleaseChannel = if ($UseLocalBuild) { "Local build" } else { Select-ReleaseChannel }
+Write-Host "[AI-Mo-To] Release channel: $selectedReleaseChannel" -ForegroundColor Cyan
 
 # 1. Detect existing installation across Registry, default AppData, or PATH
 $installedPath = $null
@@ -50,14 +81,24 @@ if ($UseLocalBuild) {
 }
 
 if (-not $installerPath) {
-  Write-Host "[AI-Mo-To] Fetching latest release from GitHub CDN (dado-ph/AI-Mo-To)..."
+  Write-Host "[AI-Mo-To] Fetching the latest $($selectedReleaseChannel.ToLowerInvariant()) release from GitHub CDN (dado-ph/AI-Mo-To)..."
   $downloadUrl = $null
   $assetName = $null
 
   try {
-    $release = Invoke-RestMethod `
-      -Headers @{ Accept = "application/vnd.github+json"; "User-Agent" = "AI-Mo-To-Installer" } `
-      -Uri "https://api.github.com/repos/dado-ph/AI-Mo-To/releases/latest"
+    $headers = @{ Accept = "application/vnd.github+json"; "User-Agent" = "AI-Mo-To-Installer" }
+    if ($selectedReleaseChannel -eq "Prerelease") {
+      $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/dado-ph/AI-Mo-To/releases?per_page=100" |
+        Where-Object { $_.prerelease -and -not $_.draft } |
+        Select-Object -First 1
+    } else {
+      $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/dado-ph/AI-Mo-To/releases/latest"
+    }
+
+    if (-not $release) {
+      throw "No published $($selectedReleaseChannel.ToLowerInvariant()) release was found."
+    }
+
     $asset = $release.assets |
       Where-Object { $_.name -match '^AI-Mo-To-Setup-.*-x64\.exe$' } |
       Select-Object -First 1
@@ -67,11 +108,11 @@ if (-not $installerPath) {
       $assetName = $asset.name
     }
   } catch {
-    Write-Host "[AI-Mo-To] GitHub API lookup un-available; attempting direct release CDN download..."
+    throw "Could not retrieve the latest $($selectedReleaseChannel.ToLowerInvariant()) release from GitHub. $($_.Exception.Message)"
   }
 
   if (-not $downloadUrl) {
-    throw "Could not locate an AI-Mo-To x64 installer in the latest GitHub release. Check the release assets or run this script from a checkout with -UseLocalBuild."
+    throw "Could not locate an AI-Mo-To x64 installer in the latest $($selectedReleaseChannel.ToLowerInvariant()) GitHub release. Check the release assets or run this script from a checkout with -UseLocalBuild."
   }
 
   $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) $assetName

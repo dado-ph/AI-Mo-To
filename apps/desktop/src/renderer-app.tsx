@@ -3,7 +3,7 @@ import "../../../packages/ui-primitives/src/tokens.css";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { FolderOpen, Settings2, Sparkles } from "lucide-react";
+import { FolderOpen, Settings2 } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { WorkspaceInspection } from "@ai-mo-to/engine";
@@ -13,6 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "./components/ui/dialog.js";
 
 const api = window.aimoto;
+const appIcon = new URL("../build/icon.png", import.meta.url).href;
 const authority = (mode: string) => mode === "suggest" ? "Suggest changes" : `${mode} mode`;
 
 function App() {
@@ -46,7 +47,7 @@ function App() {
   function sendPrompt(prompt: string) { setTerminalStage("partial"); window.setTimeout(() => { if (sessionId.current) void api.writeTerminal(sessionId.current, prompt); }, 250); }
 
   return <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_var(--aimoto-accent-soft),_transparent_38%)]">
-    <header className="flex h-16 items-center justify-between px-6"><div className="flex items-center gap-2"><Sparkles className="size-4 text-primary" /><span className="aimoto-wordmark">AIMOTO</span></div><Button variant="ghost" size="sm" onClick={() => void selectWorkspace()}><FolderOpen className="size-4" /> Open workspace</Button></header>
+    <header className="flex h-16 items-center justify-between px-6"><div className="flex items-center gap-2"><img src={appIcon} alt="" className="size-8 rounded-lg object-contain" /><span className="aimoto-wordmark">AIMOTO</span></div><Button variant="ghost" size="sm" onClick={() => void selectWorkspace()}><FolderOpen className="size-4" /> Open workspace</Button></header>
     <section className="mx-auto flex max-w-6xl flex-col px-6 pt-[11vh]"><div className="relative h-[min(58vh,560px)]">{workspaces.map((ws, index) => {
       const active = workspace?.root === ws.root;
       return <Card key={ws.root} onClick={() => setWorkspace(ws)} className={`absolute inset-x-0 mx-auto w-[min(52rem,86vw)] cursor-pointer transition-all duration-300 ${active ? "z-20 -translate-y-2 border-primary/60 shadow-2xl" : "z-10 translate-y-10 scale-[.94] opacity-60 hover:opacity-90"}`} style={{ top: `${index * 18}px` }}>

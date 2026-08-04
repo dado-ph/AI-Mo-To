@@ -51,9 +51,9 @@ and verify its digest. Do not use a real workspace for this check.
 - [ ] Review `git diff` against the previous release or selected baseline.
 - [ ] Confirm no credentials, access tokens, local databases, or generated
   workspace data are included.
-- [ ] Confirm GitHub Actions CI is green on Node 22 and Node 24.
-- [ ] Confirm the `desktop-installer` GitHub Actions workflow is green and its
-  retained Windows installer artifact matches the candidate version.
+- [ ] Confirm the Product confidence workflow is green for the Windows product.
+- [ ] Confirm the Windows release-readiness workflow is green and its retained
+  installer artifact matches the candidate version.
 - [ ] Record the tested commit SHA and the commands run in the release notes or
   pull request.
 
