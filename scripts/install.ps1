@@ -1,8 +1,9 @@
 [CmdletBinding()]
 param(
   [switch] $UseLocalBuild,
+  [Alias("ReleaseChannel")]
   [ValidateSet("Stable", "Prerelease")]
-  [string] $ReleaseChannel
+  [string] $AI_MO_TO_ReleaseChannel
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,7 +19,7 @@ function Write-InstallerBanner {
 }
 
 function Select-ReleaseChannel {
-  if ($ReleaseChannel) { return $ReleaseChannel }
+  if ($AI_MO_TO_ReleaseChannel) { return $AI_MO_TO_ReleaseChannel }
 
   Write-Host "  Choose the release channel:" -ForegroundColor White
   Write-Host "    [1] Latest stable release     Recommended for everyday use" -ForegroundColor Green
