@@ -33,6 +33,12 @@ their compatibility, recovery, and user-facing impact. Keep the product
 boundary clear: this repository builds AI-Mo-To, while the installed desktop
 app is what ordinary users run.
 
+## License for contributions
+
+By submitting a contribution to this repository, you license that contribution
+under the [GNU Affero General Public License v3.0 or later](LICENSE). Confirm
+that you have the right to do so before opening a pull request.
+
 ## Pull request expectations
 
 Explain what a user can now do, how you verified it, and any limitations. Keep
