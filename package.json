@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.3",
   "private": true,
   "description": "A local-first workspace foundry for modular, human-approved software.",
-  "license": "Apache-2.0",
+  "license": "AGPL-3.0-or-later",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "build": "pnpm -r build && node scripts/link-cli.mjs",

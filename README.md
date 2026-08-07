@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/dado-ph/AI-Mo-To/actions/workflows/product-confidence.yml"><img src="https://github.com/dado-ph/AI-Mo-To/actions/workflows/product-confidence.yml/badge.svg" alt="Product confidence status" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0 license" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg" alt="AGPL-3.0-or-later license" /></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white" alt="Node.js 22 or later" /></a>
   <a href="https://pnpm.io/"><img src="https://img.shields.io/badge/pnpm-11-F69220?logo=pnpm&logoColor=white" alt="pnpm 11" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white" alt="TypeScript 5.8" /></a>
@@ -116,4 +116,4 @@ The compiled desktop installer is written to `apps/desktop/release/`.
 
 ## 📄 License
 
-AI-Mo-To is licensed under the [Apache-2.0 License](LICENSE).
+AI-Mo-To is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE). If you modify AI-Mo-To and make it available for others to use over a network, you must offer those users the corresponding source code for the version you run.
