@@ -204,7 +204,8 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
         cols: 80,
         rows: 24,
         cwd,
-        env: process.env as Record<string, string>
+        env: process.env as Record<string, string>,
+        useConpty: process.platform === "win32"
       });
 
       proc.onData((data: string) => {

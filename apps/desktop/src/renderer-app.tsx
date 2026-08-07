@@ -27,24 +27,77 @@ function App() {
   const pendingInput = useRef<string[]>([]);
   const terminalVisible = terminalStage !== "hidden";
 
+  const syncTerminalDimensions = () => {
+    if (!fitAddon.current || !terminal.current) return;
+    try {
+      fitAddon.current.fit();
+      const cols = terminal.current.cols;
+      const rows = terminal.current.rows;
+      if (sessionId.current && cols > 0 && rows > 0) {
+        void api.resizeTerminal(sessionId.current, cols, rows);
+      }
+    } catch {}
+  };
+
   useEffect(() => { void api.openDefaultWorkspace().then(ws => { setWorkspace(ws); setWorkspaces([ws]); }).catch(() => undefined); }, []);
   useEffect(() => {
     if (!terminalVisible || !terminalHost.current || terminal.current) return;
-    const fit = new FitAddon(); const next = new Terminal({ fontFamily: '"Cascadia Mono", Consolas, monospace', fontSize: 14, cursorBlink: true, theme: { background: "#0c0e11", foreground: "#f3f5f7", cursor: "#f3f5f7", selectionBackground: "#334155" } });
-    next.loadAddon(fit); next.open(terminalHost.current); terminal.current = next; fitAddon.current = fit;
+    const fit = new FitAddon();
+    const next = new Terminal({
+      fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace',
+      fontSize: 14,
+      cursorBlink: true,
+      convertEol: true,
+      theme: { background: "#0c0e11", foreground: "#f3f5f7", cursor: "#f3f5f7", selectionBackground: "#334155" }
+    });
+    next.loadAddon(fit);
+    next.open(terminalHost.current);
+    terminal.current = next;
+    fitAddon.current = fit;
     api.onTerminalData(({ sessionId: id, chunk }) => { if (id === sessionId.current) next.write(chunk); });
     next.onData(data => { if (sessionId.current) void api.writeTerminal(sessionId.current, data); else pendingInput.current.push(data); });
-    requestAnimationFrame(() => { fit.fit(); next.focus(); });
+    requestAnimationFrame(() => {
+      syncTerminalDimensions();
+      next.focus();
+    });
     return () => { next.dispose(); terminal.current = undefined; fitAddon.current = undefined; };
   }, [terminalVisible]);
-  useEffect(() => { if (terminalVisible) void api.createTerminal(workspace?.root).then(({ sessionId: id }) => { sessionId.current = id; for (const input of pendingInput.current.splice(0)) void api.writeTerminal(id, input); requestAnimationFrame(() => { fitAddon.current?.fit(); terminal.current?.focus(); }); }); }, [workspace?.root, terminalVisible]);
+
+  useEffect(() => {
+    if (!terminalVisible || !terminalHost.current) return;
+    const observer = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        syncTerminalDimensions();
+      });
+    });
+    observer.observe(terminalHost.current);
+    return () => observer.disconnect();
+  }, [terminalVisible]);
+
+  useEffect(() => {
+    if (terminalVisible) {
+      syncTerminalDimensions();
+      terminal.current?.focus();
+    }
+  }, [terminalStage, terminalVisible]);
+
+  useEffect(() => {
+    if (terminalVisible) void api.createTerminal(workspace?.root).then(({ sessionId: id }) => {
+      sessionId.current = id;
+      for (const input of pendingInput.current.splice(0)) void api.writeTerminal(id, input);
+      requestAnimationFrame(() => {
+        syncTerminalDimensions();
+        terminal.current?.focus();
+      });
+    });
+  }, [workspace?.root, terminalVisible]);
   useEffect(() => {
     const hideTerminal = (event: KeyboardEvent) => { if (event.key === "Escape") setTerminalStage("hidden"); };
     window.addEventListener("keydown", hideTerminal);
     return () => window.removeEventListener("keydown", hideTerminal);
   }, []);
   async function selectWorkspace() { const ws = await api.selectWorkspace(); if (ws) { setWorkspace(ws); setWorkspaces(current => current.some(item => item.root === ws.root) ? current : [...current, ws]); } }
-  function sendPrompt(prompt: string) { setTerminalStage("partial"); window.setTimeout(() => { if (sessionId.current) void api.writeTerminal(sessionId.current, prompt); }, 250); }
+  function sendPrompt(prompt: string) { setTerminalStage("partial"); window.setTimeout(() => { if (sessionId.current) void api.writeTerminal(sessionId.current, prompt.endsWith("\r") ? prompt : `${prompt}\r`); }, 250); }
 
   return <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_var(--aimoto-accent-soft),_transparent_38%)]">
     <header className="flex h-16 items-center justify-between px-6"><div className="flex items-center gap-2"><img src={appIcon} alt="" className="size-8 rounded-lg object-contain" /><span className="aimoto-wordmark">AIMOTO</span></div><Button variant="ghost" size="sm" onClick={() => void selectWorkspace()}><FolderOpen className="size-4" /> Open workspace</Button></header>
