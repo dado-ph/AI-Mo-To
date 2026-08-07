@@ -57,6 +57,18 @@ export function initPillTerminalOverlay(api: DesktopApi, workspaceRoot?: string)
   const minBtn = element<HTMLElement>("#btn-term-min");
   const xtermContainer = element<HTMLElement>("#xterm-container");
 
+  const syncSize = () => {
+    if (!fitAddonInstance || !xtermInstance) return;
+    try {
+      fitAddonInstance.fit();
+      const cols = xtermInstance.cols;
+      const rows = xtermInstance.rows;
+      if (activeTerminalSessionId && cols > 0 && rows > 0) {
+        void api.resizeTerminal(activeTerminalSessionId, cols, rows);
+      }
+    } catch {}
+  };
+
   if (!xtermInstance) {
     fitAddonInstance = new FitAddon();
     xtermInstance = new Terminal({
@@ -75,34 +87,39 @@ export function initPillTerminalOverlay(api: DesktopApi, workspaceRoot?: string)
         white: "#eeeeee"
       },
       fontSize: 13,
-      fontFamily: '"Cascadia Mono", Consolas, monospace',
-      cursorBlink: true
+      fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, monospace',
+      cursorBlink: true,
+      convertEol: true
     });
     xtermInstance.loadAddon(fitAddonInstance);
     xtermInstance.open(xtermContainer);
-    try { fitAddonInstance.fit(); } catch {}
+    syncSize();
+
+    const observer = new ResizeObserver(() => {
+      requestAnimationFrame(syncSize);
+    });
+    observer.observe(xtermContainer);
   }
 
   maxBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     pill.classList.add("maximized");
-    setTimeout(() => { try { fitAddonInstance?.fit(); } catch {} }, 100);
-    xtermInstance?.focus();
+    setTimeout(() => { syncSize(); xtermInstance?.focus(); }, 100);
   });
 
   minBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     pill.classList.remove("maximized");
-    setTimeout(() => { try { fitAddonInstance?.fit(); } catch {} }, 100);
+    setTimeout(() => { syncSize(); }, 100);
   });
 
   pill.addEventListener("mouseenter", () => {
-    setTimeout(() => { try { fitAddonInstance?.fit(); } catch {} }, 150);
+    setTimeout(() => { syncSize(); }, 150);
   });
 
   pill.addEventListener("click", () => {
     setTimeout(() => {
-      try { fitAddonInstance?.fit(); } catch {}
+      syncSize();
       xtermInstance?.focus();
     }, 150);
   });
@@ -111,6 +128,7 @@ export function initPillTerminalOverlay(api: DesktopApi, workspaceRoot?: string)
     const rootPath = workspaceRoot || "default";
     api.createTerminal(rootPath).then((res) => {
       activeTerminalSessionId = res.sessionId;
+      syncSize();
     }).catch(() => {});
 
     api.onTerminalData((data) => {
