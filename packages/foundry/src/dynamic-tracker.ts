@@ -88,6 +88,22 @@ async function validateDynamicApp(module: StagedModule, moduleId: string): Promi
     if (!validation.valid || manifest.moduleId !== moduleId) {
       return { ok: false, diagnostics: [{ code: "ManifestInvalid", message: "The generated module manifest is invalid." }] };
     }
+
+    // PMP Rehearsal Check: Verify declared UI entrypoint if present
+    const entryPath = manifest.entry || "ui/index.html";
+    const fullEntryPath = `${module.directory}/${entryPath}`;
+    try {
+      const uiContent = await readFile(fullEntryPath, "utf8");
+      if (!uiContent.trim()) {
+        return { ok: false, diagnostics: [{ code: "EmptyUIEntrypoint", message: `The declared UI entrypoint (${entryPath}) is empty.` }] };
+      }
+    } catch {
+      // If module declares traditional views without top-level entry, allow it for backwards compatibility
+      if (manifest.entry) {
+        return { ok: false, diagnostics: [{ code: "MissingUIEntrypoint", message: `The declared UI entrypoint (${entryPath}) does not exist on disk.` }] };
+      }
+    }
+
     return { ok: true, diagnostics: [] };
   } catch {
     return { ok: false, diagnostics: [{ code: "ManifestUnreadable", message: "The generated module manifest cannot be read." }] };
@@ -101,7 +117,7 @@ export function createDynamicAppFoundry(stagingRoot: string, requestText: string
     generator: { generate: async (p) => createDynamicAppBundle(p) },
     staticValidator: { validate: (m) => validateDynamicApp(m, plan.moduleId) },
     dryActivator: {
-      activate: async (_module, disposableStateDirectory) => {
+      activate: async (module, disposableStateDirectory) => {
         await writeFile(`${disposableStateDirectory}/activation.json`, JSON.stringify({ activated: true }));
         return { ok: true, diagnostics: [] };
       }

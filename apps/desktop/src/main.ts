@@ -2,7 +2,8 @@ import type { WorkspaceInspection } from "@ai-mo-to/engine";
 import { WorkspaceEngine } from "@ai-mo-to/engine";
 import { runCli } from "@ai-mo-to/cli";
 import { createRequire } from "node:module";
-import { access, readFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { exec } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DesktopApi } from "./contracts.js";
@@ -10,8 +11,9 @@ import type { DesktopApi } from "./contracts.js";
 /** Minimal Electron-shaped API. Kept structural so the domain code stays testable without Electron. */
 export interface ElectronMainRuntime {
   ipcMain: { handle(channel: string, listener: (...args: unknown[]) => unknown): void };
-  dialog: { showOpenDialog(options: { properties: string[] }): Promise<{ canceled: boolean; filePaths: string[] }> };
+  dialog: { showOpenDialog(options: { defaultPath?: string; properties: string[] }): Promise<{ canceled: boolean; filePaths: string[] }> };
   BrowserWindow: new (options: { webPreferences: { contextIsolation: true; sandbox: true; preload: string } }) => { loadFile(file: string): Promise<void> };
+  shell?: { openPath(path: string): Promise<string> };
 }
 
 /** Implemented by WorkspaceEngine; structural typing keeps Electron tests free of storage runtime. */
@@ -71,6 +73,73 @@ export async function resolveWorkspaceLaunchTarget(value: string, userDataPath: 
   return value;
 }
 
+export async function openWorkspaceFolder(root: string, runtime?: ElectronMainRuntime): Promise<void> {
+  if (runtime?.shell?.openPath) {
+    await runtime.shell.openPath(root);
+    return;
+  }
+  return new Promise((resolve) => {
+    const cmd = process.platform === "win32"
+      ? `explorer "${root}"`
+      : process.platform === "darwin"
+      ? `open "${root}"`
+      : `xdg-open "${root}"`;
+    exec(cmd, () => resolve());
+  });
+}
+
+export async function scanAllWorkspaces(userDataPath: string, engine: WorkspaceInspector): Promise<WorkspaceInspection[]> {
+  const storageRoot = process.env.LOCALAPPDATA
+    ? join(process.env.LOCALAPPDATA, "AI-Mo-To")
+    : userDataPath;
+  const workspacesDir = join(storageRoot, "workspaces");
+  const registryPath = join(workspacesDir, "registry.json");
+  const candidateRoots = new Set<string>();
+
+  candidateRoots.add(defaultWorkspaceRoot(userDataPath));
+
+  try {
+    const registryRaw = await readFile(registryPath, "utf8");
+    const registry = JSON.parse(registryRaw) as { workspaces?: Array<{ root: string }> };
+    for (const entry of registry.workspaces ?? []) {
+      if (entry?.root) candidateRoots.add(entry.root);
+    }
+  } catch {}
+
+  try {
+    const entries = await readdir(workspacesDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        candidateRoots.add(join(workspacesDir, entry.name));
+      }
+    }
+  } catch {}
+
+  const results: WorkspaceInspection[] = [];
+  const validRegistrations: Array<{ id: string; name: string; root: string; updatedAt: string }> = [];
+
+  for (const root of candidateRoots) {
+    try {
+      await access(join(root, ".aimoto", "workspace.json"));
+      const inspection = await engine.inspectWorkspace(root);
+      results.push(inspection);
+      validRegistrations.push({
+        id: inspection.workspaceId,
+        name: inspection.name,
+        root: inspection.root,
+        updatedAt: new Date().toISOString()
+      });
+    } catch {}
+  }
+
+  try {
+    await mkdir(workspacesDir, { recursive: true });
+    await writeFile(registryPath, JSON.stringify({ version: 1, workspaces: validRegistrations }, null, 2) + "\n", "utf8");
+  } catch {}
+
+  return results;
+}
+
 /** Opens the stable first-run workspace, creating it only when it does not yet exist. */
 export async function openOrCreateDefaultWorkspace(engine: WorkspaceCreator, userDataPath: string): Promise<WorkspaceInspection> {
   const root = defaultWorkspaceRoot(userDataPath);
@@ -91,6 +160,22 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
       throw new Error("selectWorkspace must be provided by the Electron main process.");
     },
     inspectWorkspace: (root) => engine.inspectWorkspace(root),
+    listAllWorkspaces: async () => [],
+    openWorkspaceFolder: async (root) => { await openWorkspaceFolder(root); },
+    createWorkspace: async (name, rootPath) => {
+      const root = rootPath ?? join(process.env.LOCALAPPDATA ?? process.cwd(), "AI-Mo-To", "workspaces", name.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+      return (engine as any).createWorkspace ? (engine as any).createWorkspace({ root, name, workspaceId: name.toLowerCase().replace(/[^a-z0-9]+/g, "-") }) : engine.inspectWorkspace(root);
+    },
+    renameWorkspace: async (root, newName) => {
+      const manifestPath = join(root, ".aimoto", "workspace.json");
+      const current = JSON.parse(await readFile(manifestPath, "utf8"));
+      current.name = newName;
+      await writeFile(manifestPath, JSON.stringify(current, null, 2) + "\n", "utf8");
+      return engine.inspectWorkspace(root);
+    },
+    deleteWorkspace: async () => {},
+    listSnapshots: async (root) => (engine as any).listSnapshots ? (engine as any).listSnapshots(root) : [],
+    restoreSnapshot: async (root) => engine.inspectWorkspace(root),
     listRecords: (root, moduleId, collectionId) =>
       (moduleId === "aimoto.files" || moduleId === "aimoto.tasks"
         ? engine.listBuiltInRecords(root, moduleId as "aimoto.files" | "aimoto.tasks")
@@ -138,8 +223,76 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
     if (typeof root !== "string") throw new Error("workspace root must be a string");
     return engine.inspectWorkspace(root);
   });
+  runtime.ipcMain.handle("workspace:listAll", async () => {
+    const userDataPath = process.env.LOCALAPPDATA
+      ? join(process.env.LOCALAPPDATA, "AI-Mo-To")
+      : (process.env.APPDATA ? join(process.env.APPDATA, "AI-Mo-To") : process.cwd());
+    return scanAllWorkspaces(userDataPath, engine);
+  });
+  runtime.ipcMain.handle("workspace:openFolder", async (_event: unknown, root: unknown) => {
+    if (typeof root !== "string") throw new Error("workspace root must be a string");
+    return openWorkspaceFolder(root, runtime);
+  });
+  runtime.ipcMain.handle("workspace:create", async (_event: unknown, name: unknown, rootPath?: unknown) => {
+    if (typeof name !== "string" || !name.trim()) throw new Error("workspace name is required");
+    const storageRoot = process.env.LOCALAPPDATA
+      ? join(process.env.LOCALAPPDATA, "AI-Mo-To")
+      : (process.env.APPDATA ? join(process.env.APPDATA, "AI-Mo-To") : process.cwd());
+    const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const root = typeof rootPath === "string" && rootPath.trim() ? rootPath.trim() : join(storageRoot, "workspaces", slug);
+    if ((engine as any).createWorkspace) {
+      await (engine as any).createWorkspace({ root, name: name.trim(), workspaceId: slug });
+    }
+    await scanAllWorkspaces(storageRoot, engine);
+    return engine.inspectWorkspace(root);
+  });
+  runtime.ipcMain.handle("workspace:rename", async (_event: unknown, root: unknown, newName: unknown) => {
+    if (typeof root !== "string" || typeof newName !== "string" || !newName.trim()) throw new Error("root and newName required");
+    const manifestPath = join(root, ".aimoto", "workspace.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.name = newName.trim();
+    await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+    const storageRoot = process.env.LOCALAPPDATA
+      ? join(process.env.LOCALAPPDATA, "AI-Mo-To")
+      : (process.env.APPDATA ? join(process.env.APPDATA, "AI-Mo-To") : process.cwd());
+    await scanAllWorkspaces(storageRoot, engine);
+    return engine.inspectWorkspace(root);
+  });
+  runtime.ipcMain.handle("workspace:delete", async (_event: unknown, root: unknown) => {
+    if (typeof root !== "string") throw new Error("workspace root must be a string");
+    const storageRoot = process.env.LOCALAPPDATA
+      ? join(process.env.LOCALAPPDATA, "AI-Mo-To")
+      : (process.env.APPDATA ? join(process.env.APPDATA, "AI-Mo-To") : process.cwd());
+    const registryPath = join(storageRoot, "workspaces", "registry.json");
+    try {
+      const raw = await readFile(registryPath, "utf8");
+      const registry = JSON.parse(raw) as { workspaces?: Array<{ root: string }> };
+      if (registry.workspaces) {
+        registry.workspaces = registry.workspaces.filter(e => e.root !== root);
+        await writeFile(registryPath, JSON.stringify(registry, null, 2) + "\n", "utf8");
+      }
+    } catch {}
+    return { ok: true };
+  });
+  runtime.ipcMain.handle("snapshots:list", async (_event: unknown, root: unknown) => {
+    if (typeof root !== "string") throw new Error("workspace root must be a string");
+    return (engine as any).listSnapshots ? (engine as any).listSnapshots(root) : [];
+  });
+  runtime.ipcMain.handle("snapshots:restore", async (_event: unknown, root: unknown, snapshotId: unknown) => {
+    if (typeof root !== "string" || typeof snapshotId !== "string") throw new Error("root and snapshotId required");
+    if ((engine as any).createSnapshotRestoreProposal) {
+      const prop = await (engine as any).createSnapshotRestoreProposal({ root, snapshotId });
+      let stdout = "";
+      const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
+      await runCli(["apply", "--workspace", root, "--proposal", prop.proposalId, "--hash", prop.changeSetDigest, "--json"], io);
+    }
+    return engine.inspectWorkspace(root);
+  });
   runtime.ipcMain.handle("workspace:select", async () => {
-    const result = await runtime.dialog.showOpenDialog({ properties: ["openDirectory"] });
+    const defaultPath = process.env.LOCALAPPDATA
+      ? join(process.env.LOCALAPPDATA, "AI-Mo-To", "workspaces")
+      : (process.env.APPDATA ? join(process.env.APPDATA, "AI-Mo-To", "workspaces") : process.cwd());
+    const result = await runtime.dialog.showOpenDialog({ defaultPath, properties: ["openDirectory"] });
     const root = result.filePaths[0];
     return result.canceled || !root ? undefined : engine.inspectWorkspace(root);
   });

@@ -6,6 +6,13 @@ export interface DesktopApi {
   openDefaultWorkspace(): Promise<WorkspaceInspection>;
   selectWorkspace(): Promise<WorkspaceInspection | undefined>;
   inspectWorkspace(root: string): Promise<WorkspaceInspection>;
+  listAllWorkspaces(): Promise<WorkspaceInspection[]>;
+  openWorkspaceFolder(root: string): Promise<void>;
+  createWorkspace(name: string, rootPath?: string): Promise<WorkspaceInspection>;
+  renameWorkspace(root: string, newName: string): Promise<WorkspaceInspection>;
+  deleteWorkspace(root: string): Promise<void>;
+  listSnapshots(root: string): Promise<readonly unknown[]>;
+  restoreSnapshot(root: string, snapshotId: string): Promise<WorkspaceInspection>;
   listRecords(root: string, moduleId: string, collectionId?: string): Promise<readonly DesktopRecord[]>;
   executeCommand(input: DesktopCommandInput): Promise<DesktopRecord | { removed: true; recordId: string }>;
   listModuleViews(root: string, moduleId: string): Promise<readonly InstalledModuleView[]>;

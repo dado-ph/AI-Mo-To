@@ -36,16 +36,21 @@ export async function allocateAgentAppRepository(
   return { appId, root, promptFile, manifestFile };
 }
 
-/** Stable instructions shared by Codex CLI and future provider adapters. */
-export const DEFAULT_AGENT_GUIDE = `# AI-Mo-To Foundry
-You are building an application for one user in the supplied repository.
-Use the repository's configured stack and create source code, tests, and a runnable UI.
-Treat this guide as design and engineering guidance, not as a catalogue of application types.
-Infer the workflow from the request, handle loading/empty/error/cancel states, and make controls accessible.
-Never add commentary about the UI into the UI. Use concise labels for actions, objects, and necessary states only; do not add explanatory product prose, reassurance, or narration to fill space.
-Shadcn/UI is required, not optional styling guidance: initialise the app with the official shadcn CLI, preserve components.json and the generated components/ui source, and compose the interface from real shadcn components (Button, Card, Dialog, Input, Badge, Table, Tabs as applicable). Do not hand-roll visual imitations of those components. Author the visual system through the standard CSS token slots (--background, --foreground, --primary, --card, --radius).
-Produce an AI-Mo-To module.json that satisfies the module-manifest contract, including capabilities as unique strings.
-Use this exact shape (replace the identifiers and names, but do not add undeclared top-level properties):
+export const DEFAULT_AGENT_GUIDE = `# AI-Mo-To Foundry — Practice Makes Perfect (PMP) Guide
+
+You are building a local application for a user in the supplied repository using the **Practice Makes Perfect (PMP)** workflow.
+
+## 🎯 Architecture Principles
+
+1. **Python for Automation & Logic (The Muscles):** Write clean Python backend scripts (\`scripts/*.py\`) for computer-use tasks, local data processing, filesystem operations, and calculations.
+2. **Shadcn HTML UI (The Face):** Build a self-contained, responsive HTML/CSS/JS entrypoint (\`ui/index.html\`) composed with Shadcn UI styling tokens (\`--background\`, \`--foreground\`, \`--primary\`, \`--card\`, \`--radius\`).
+3. **UI Action Callbacks:** Connect UI controls (button clicks, form submits) to execute the background Python scripts via the AI-Mo-To bridge or \`exec.python\` capability.
+4. **Empirical Rehearsal:** Before reporting completion, run local validation and verify that \`ui/index.html\` exists on disk, renders interactive controls, and that Python backend scripts execute cleanly without runtime errors. Do not return mockups, documentation summaries, or empty JSON declarations.
+
+## 📄 Streamlined Module Manifest (\`module.json\`)
+
+Create a clean, functional \`module.json\` manifest:
+
 \`\`\`json
 {
   "schemaVersion": "1.0.0",
@@ -53,33 +58,31 @@ Use this exact shape (replace the identifiers and names, but do not add undeclar
   "name": "Human-readable app name",
   "version": "1.0.0",
   "trustTier": "local-generated",
-  "collections": [],
-  "views": [
-    { "id": "main", "kind": "app", "declaration": "views/main.view.json" }
-  ],
-  "commands": [],
-  "events": [],
-  "capabilities": ["storage.local"],
-  "migrations": []
+  "entry": "ui/index.html",
+  "scripts": ["scripts/handler.py"],
+  "capabilities": ["storage.local", "exec.python"]
 }
 \`\`\`
-schemaVersion is the string "1.0.0"; the identity field is moduleId, not id. All nine required arrays must be present. Top-level description and requestedCapabilities are not part of this strict manifest.
-The primary user-facing view should normally use kind "app". Its in-bundle JSON declaration must contain {"title":"...","kind":"app","entry":"ui/index.html"}. Build that entry as a self-contained, functional HTML/CSS/JavaScript application: controls must perform the requested workflow, cancellation or stopping must work when relevant, state must visibly update, and user state must persist across reloads using a module-namespaced localStorage key. Do not return a mockup, documentation page, summary card, or nonfunctional controls. Do not depend on a development server or network-hosted scripts.
-Every view must have an id, kind, and an in-bundle JSON declaration path; keep declarations and entrypoints inside this repository. If the workspace layout is customized, put it in a separate aimoto.workspace.json file with layout.homeView and layout.views using those module view ids.
-For a single main view, use:
+
+- \`schemaVersion\` is "1.0.0".
+- \`moduleId\` is a unique lowercase identifier (e.g. \`local.task-tracker\`).
+- \`entry\` points directly to your primary UI HTML file (\`ui/index.html\`).
+- \`scripts\` lists executable Python script handlers for UI callbacks.
+- Declare all required capabilities in \`capabilities\` before using them.
+
+If a workspace layout is customized, put it in a separate \`aimoto.workspace.json\` file:
 \`\`\`json
 {
   "layout": {
-    "homeView": "app.main",
+    "homeView": "local.descriptive-app-id",
     "views": [
-      { "id": "app.main", "moduleId": "local.descriptive-app-id", "viewId": "main" }
+      { "id": "local.descriptive-app-id", "moduleId": "local.descriptive-app-id", "viewId": "main" }
     ]
   }
 }
 \`\`\`
-Do not access or modify any repository outside this app repository. Declare capabilities before using them.
-Run the project's validation commands before reporting completion.
-Do not merely explain, propose, or print the files in your response. Create them in the supplied repository. Before you finish, verify that module.json, aimoto.workspace.json, the declared view JSON, and the declared HTML entrypoint all exist on disk and that the application tests pass.`;
+
+Do not access or modify any repository outside this app repository. Run project validation commands before reporting completion.`;
 
 export interface AgentProvider {
   name: string;

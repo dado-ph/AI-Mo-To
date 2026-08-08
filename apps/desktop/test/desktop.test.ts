@@ -211,7 +211,8 @@ describe("desktop shell", () => {
       { root: "C:/default" } as never
     );
     expect(handle.mock.calls.map(([channel]) => channel)).toEqual([
-      "workspace:default", "workspace:inspect", "workspace:select", "workspace:request", "workspace:apply", "records:list", "records:execute",
+      "workspace:default", "workspace:inspect", "workspace:listAll", "workspace:openFolder", "workspace:create", "workspace:rename", "workspace:delete",
+      "snapshots:list", "snapshots:restore", "workspace:select", "workspace:request", "workspace:apply", "records:list", "records:execute",
       "module:views", "terminal:create", "terminal:write", "terminal:resize"
     ]);
   });

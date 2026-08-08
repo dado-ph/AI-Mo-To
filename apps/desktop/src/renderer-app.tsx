@@ -11,6 +11,7 @@ import { Badge } from "./components/ui/badge.js";
 import { Button } from "./components/ui/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card.js";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "./components/ui/dialog.js";
+import { WorkspaceManagerDrawer } from "./components/workspace-manager-drawer.js";
 
 const api = window.aimoto;
 const appIcon = new URL("../build/icon.png", import.meta.url).href;
@@ -27,6 +28,23 @@ function App() {
   const pendingInput = useRef<string[]>([]);
   const terminalVisible = terminalStage !== "hidden";
 
+  const refreshAllWorkspaces = async () => {
+    try {
+      const all = await api.listAllWorkspaces();
+      if (all && all.length > 0) {
+        setWorkspaces(all);
+        setWorkspace(curr => curr ? (all.find(w => w.root === curr.root) ?? all[0]) : all[0]);
+      } else {
+        const def = await api.openDefaultWorkspace();
+        setWorkspace(def);
+        setWorkspaces([def]);
+      }
+    } catch {
+      const def = await api.openDefaultWorkspace().catch(() => undefined);
+      if (def) { setWorkspace(def); setWorkspaces([def]); }
+    }
+  };
+
   const syncTerminalDimensions = () => {
     if (!fitAddon.current || !terminal.current) return;
     try {
@@ -39,7 +57,7 @@ function App() {
     } catch {}
   };
 
-  useEffect(() => { void api.openDefaultWorkspace().then(ws => { setWorkspace(ws); setWorkspaces([ws]); }).catch(() => undefined); }, []);
+  useEffect(() => { void refreshAllWorkspaces(); }, []);
   useEffect(() => {
     if (!terminalVisible || !terminalHost.current || terminal.current) return;
     const fit = new FitAddon();
@@ -100,7 +118,19 @@ function App() {
   function sendPrompt(prompt: string) { setTerminalStage("partial"); window.setTimeout(() => { if (sessionId.current) void api.writeTerminal(sessionId.current, prompt.endsWith("\r") ? prompt : `${prompt}\r`); }, 250); }
 
   return <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_var(--aimoto-accent-soft),_transparent_38%)]">
-    <header className="flex h-16 items-center justify-between px-6"><div className="flex items-center gap-2"><img src={appIcon} alt="" className="size-8 rounded-lg object-contain" /><span className="aimoto-wordmark">AIMOTO</span></div><Button variant="ghost" size="sm" onClick={() => void selectWorkspace()}><FolderOpen className="size-4" /> Open workspace</Button></header>
+    <header className="flex h-16 items-center justify-between px-6">
+      <div className="flex items-center gap-2">
+        <img src={appIcon} alt="" className="size-8 rounded-lg object-contain" />
+        <span className="aimoto-wordmark">AIMOTO</span>
+      </div>
+      <WorkspaceManagerDrawer
+        activeWorkspace={workspace}
+        workspaces={workspaces}
+        onSelectWorkspace={(ws) => setWorkspace(ws)}
+        onRefreshWorkspaces={refreshAllWorkspaces}
+        onImportWorkspace={selectWorkspace}
+      />
+    </header>
     <section className="mx-auto flex max-w-6xl flex-col px-6 pt-[11vh]"><div className="relative h-[min(58vh,560px)]">{workspaces.map((ws, index) => {
       const active = workspace?.root === ws.root;
       return <Card key={ws.root} onClick={() => setWorkspace(ws)} className={`absolute inset-x-0 mx-auto w-[min(52rem,86vw)] cursor-pointer transition-all duration-300 ${active ? "z-20 -translate-y-2 border-primary/60 shadow-2xl" : "z-10 translate-y-10 scale-[.94] opacity-60 hover:opacity-90"}`} style={{ top: `${index * 18}px` }}>
@@ -113,3 +143,4 @@ function App() {
   </main>;
 }
 createRoot(document.getElementById("root")!).render(<App />);
+
