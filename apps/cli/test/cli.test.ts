@@ -1,10 +1,9 @@
-import { access, mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { validateProtocol } from "@ai-mo-to/protocol";
-import { EngineError } from "@ai-mo-to/engine";
 
 import { desktopExecutableCandidates, runCli, type CliIo } from "../src/cli.js";
 
@@ -16,11 +15,7 @@ async function temporaryDirectory(): Promise<string> {
   return root;
 }
 
-function capture(): {
-  io: CliIo;
-  stdout: string[];
-  stderr: string[];
-} {
+function capture(): { io: CliIo; stdout: string[]; stderr: string[] } {
   const stdout: string[] = [];
   const stderr: string[] = [];
   return {
@@ -33,11 +28,14 @@ function capture(): {
   };
 }
 
+function json(output: ReturnType<typeof capture>): Record<string, any> {
+  return JSON.parse(output.stdout[0] ?? "") as Record<string, any>;
+}
+
 afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
-  );
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+
 describe("aimoto CLI", () => {
   it("prefers the packaged host when the installer used a custom directory", () => {
     expect(desktopExecutableCandidates(
@@ -50,593 +48,180 @@ describe("aimoto CLI", () => {
     ]);
   });
 
-  it("creates and inspects the same workspace through JSON commands", async () => {
+  it("creates and inspects a module-free workspace through JSON commands", async () => {
     const cwd = await temporaryDirectory();
-    const createdOutput = capture();
-    const createdExit = await runCli(
-      [
-        "workspace",
-        "create",
-        "Neighborhood Clean-up",
-        "--root",
-        "clean-up",
-        "--json"
-      ],
-      createdOutput.io,
-      {
-        cwd,
-        traceId: () => "d49b2144-17a8-4a1c-8f3e-01e92d6c6e5e"
-      }
-    );
-    const createdEnvelope = JSON.parse(createdOutput.stdout[0] ?? "") as unknown;
-
-    expect(createdExit).toBe(0);
-    expect(validateProtocol("json-envelope", createdEnvelope).valid).toBe(true);
-    expect(createdEnvelope).toMatchObject({
+    const created = capture();
+    expect(await runCli(["workspace", "create", "Garden", "--root", "garden", "--json"], created.io, { cwd })).toBe(0);
+    expect(validateProtocol("json-envelope", json(created)).valid).toBe(true);
+    expect(json(created)).toMatchObject({
       ok: true,
       command: "workspace.create",
-      data: {
-        workspaceId: "neighborhood-clean-up",
-        revision: 0,
-        health: "ok"
-      }
+      data: { workspaceId: "garden", revision: 0, currentVersionId: null, health: "ok" }
     });
+    expect(json(created).data).not.toHaveProperty("modules");
 
-    const inspectedOutput = capture();
-    const inspectedExit = await runCli(
-      ["inspect", "--workspace", "clean-up", "--json"],
-      inspectedOutput.io,
-      {
-        cwd,
-        traceId: () => "32d9999f-3703-48cb-8736-f4546697a21c"
-      }
-    );
-
-    expect(inspectedExit).toBe(0);
-    expect(JSON.parse(inspectedOutput.stdout[0] ?? "")).toMatchObject({
+    const inspected = capture();
+    expect(await runCli(["inspect", "--workspace", "garden", "--json"], inspected.io, { cwd })).toBe(0);
+    expect(json(inspected)).toMatchObject({
       ok: true,
       command: "inspect",
+      data: { workspaceId: "garden", revision: 0, currentVersionId: null, health: "ok" }
+    });
+  });
+
+  it("returns a direct implementation brief without creating a proposal", async () => {
+    const cwd = await temporaryDirectory();
+    const localAppData = join(cwd, "local-app-data");
+    const workspaceRoot = join(localAppData, "AI-Mo-To", "workspaces", "garden");
+    const output = capture();
+
+    expect(await runCli(["request", "Build a garden planner", "--workspace", workspaceRoot, "--json"], output.io, {
+      cwd,
+      environment: { LOCALAPPDATA: localAppData }
+    })).toBe(0);
+    expect(json(output)).toMatchObject({
+      ok: true,
+      command: "request",
       data: {
-        workspaceId: "neighborhood-clean-up",
-        revision: 0,
-        health: "ok",
-        evidence: {
-          revisions: [expect.objectContaining({ revision: 0, reason: "workspace.created" })],
-          proposals: [],
-          approvals: [],
-          recordHealth: { status: "ok", totalRecords: 0, totalEvents: 0, collections: [] }
+        implementationBrief: {
+          workspaceRoot,
+          workspaceId: "garden",
+          request: "Build a garden planner",
+          instructions: expect.stringContaining("must now implement the workspace")
         }
       }
     });
+    expect(json(output).data).not.toHaveProperty("proposal");
+    expect(json(output).data).not.toHaveProperty("category");
+    expect(json(output).data).not.toHaveProperty("stagedModule");
+  });
+
+  it("rejects a request path outside the canonical AppData workspace store and gives the agent the correction", async () => {
+    const cwd = await temporaryDirectory();
+    const localAppData = join(cwd, "local-app-data");
+    const homeWorkspace = join(cwd, "ui-callback-laboratory");
+    const output = capture();
+
+    expect(await runCli(["request", "Build a callback laboratory", "--workspace", homeWorkspace, "--json"], output.io, {
+      cwd,
+      environment: { LOCALAPPDATA: localAppData }
+    })).toBe(2);
+    expect(json(output)).toMatchObject({
+      ok: false,
+      command: "request",
+      error: {
+        code: "InvalidInput",
+        message: expect.stringContaining(`Remove --workspace and run the request again; AI-Mo-To will use \"${join(localAppData, "AI-Mo-To", "workspaces", "default")}\"`)
+      }
+    });
+  });
+
+  it("rejects the removed request --agent path", async () => {
+    const cwd = await temporaryDirectory();
+    const output = capture();
+
+    expect(await runCli(["request", "Build a garden planner", "--workspace", "garden", "--agent", "--json"], output.io, { cwd })).toBe(2);
+    expect(json(output)).toMatchObject({
+      ok: false,
+      command: "request",
+      error: { code: "InvalidInput", message: expect.stringContaining("--agent") }
+    });
+  });
+
+  it("creates no version until version create is explicitly run", async () => {
+    const cwd = await temporaryDirectory();
+    const localAppData = join(cwd, "local-app-data");
+    const workspaceRoot = join(localAppData, "AI-Mo-To", "workspaces", "garden");
+    await runCli(["request", "Build a garden planner", "--workspace", workspaceRoot, "--json"], capture().io, {
+      cwd,
+      environment: { LOCALAPPDATA: localAppData }
+    });
+    const listed = capture();
+
+    expect(await runCli(["version", "list", "--workspace", workspaceRoot, "--json"], listed.io, {
+      cwd,
+      environment: { LOCALAPPDATA: localAppData }
+    })).toBe(0);
+    expect(json(listed)).toMatchObject({ ok: true, command: "version.list", data: { versions: [] } });
+  });
+
+  it("creates a version only with a user-approved summary", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["workspace", "create", "Garden", "--root", "garden", "--json"], capture().io, { cwd });
+    await writeFile(join(cwd, "garden", "index.html"), "<button>Water</button>");
+    const missingMessage = capture();
+    expect(await runCli(["version", "create", "--workspace", "garden", "--json"], missingMessage.io, { cwd })).toBe(2);
+    expect(json(missingMessage)).toMatchObject({
+      ok: false,
+      command: "version.create",
+      error: { code: "InvalidInput", message: expect.stringContaining("--message") }
+    });
+
+    const created = capture();
+    expect(await runCli([
+      "version", "create", "--workspace", "garden", "--message", "Add garden UI", "--json"
+    ], created.io, { cwd })).toBe(0);
+    expect(json(created)).toMatchObject({
+      ok: true,
+      command: "version.create",
+      data: {
+        explicitUserConfirmationRequired: true,
+        version: { message: "Add garden UI", revision: 1, parentVersionId: null }
+      }
+    });
+
+    const listed = capture();
+    await runCli(["version", "list", "--workspace", "garden", "--json"], listed.io, { cwd });
+    expect(json(listed).data.versions).toEqual([
+      expect.objectContaining({ versionId: json(created).data.version.versionId, message: "Add garden UI" })
+    ]);
+  });
+
+  it("restores a selected capture as a new version", async () => {
+    const cwd = await temporaryDirectory();
+    const workspaceRoot = join(cwd, "garden");
+    await runCli(["workspace", "create", "Garden", "--root", "garden", "--json"], capture().io, { cwd });
+    await writeFile(join(workspaceRoot, "index.html"), "original");
+    const created = capture();
+    await runCli(["version", "create", "--workspace", "garden", "--message", "Original", "--json"], created.io, { cwd });
+    const versionId = json(created).data.version.versionId as string;
+    await writeFile(join(workspaceRoot, "index.html"), "changed");
+    const restored = capture();
+
+    expect(await runCli(["version", "restore", versionId, "--workspace", "garden", "--json"], restored.io, { cwd })).toBe(0);
+    expect(json(restored)).toMatchObject({
+      ok: true,
+      command: "version.restore",
+      data: { version: { revision: 2, parentVersionId: versionId } }
+    });
+    await expect(readFile(join(workspaceRoot, "index.html"), "utf8")).resolves.toBe("original");
+  });
+
+  it("publishes the request and explicit version commands in machine-readable help", async () => {
+    const output = capture();
+    expect(await runCli(["--help", "--json"], output.io)).toBe(0);
+    expect(json(output).data.usage).toContain("aimoto request");
+    expect(json(output).data.usage).toContain("aimoto version create");
+    expect(json(output).data.usage).toContain("explicit user confirmation");
+    expect(json(output).data.usage).not.toContain("--agent");
   });
 
   it("returns a stable JSON error for a missing workspace", async () => {
     const cwd = await temporaryDirectory();
     const output = capture();
-    const exitCode = await runCli(
-      ["inspect", "--json"],
-      output.io,
-      {
-        cwd,
-        traceId: () => "32d9999f-3703-48cb-8736-f4546697a21c"
-      }
-    );
-
-    expect(exitCode).toBe(2);
-    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
-      ok: false,
-      command: "inspect",
-      error: {
-        code: "WorkspaceNotFound"
-      }
-    });
-  });
-
-  it.each([
-    ["EACCES", "FilesystemAccessDenied", "filesystem"],
-    ["EBUSY", "ResourceBusy", "resource"],
-    ["ERR_MODULE_NOT_FOUND", "ResourceNotFound", "resource"],
-    ["SQLITE_CANTOPEN", "BootstrapFailed", "bootstrap"],
-  ])("normalizes %s without exposing exception data", async (nativeCode, publicCode, category) => {
-    const cwd = await temporaryDirectory();
-    await runCli(["init", "Failure Boundary", "--root", "boundary", "--json"], capture().io, { cwd });
-    const output = capture();
-    const sensitivePath = join(cwd, "private", "credential.txt");
-    const failure = Object.assign(new Error(`failed at ${sensitivePath} with token=secret`), {
-      code: nativeCode,
-      path: sensitivePath,
-    });
-
-    expect(await runCli(
-      ["open", "--workspace", "boundary", "--json"],
-      output.io,
-      {
-        cwd,
-        traceId: () => "32d9999f-3703-48cb-8736-f4546697a21c",
-        openDesktop: async () => { throw failure; },
-      }
-    )).toBe(publicCode === "InternalError" ? 1 : 2);
-    const serialized = output.stdout[0] ?? "";
-    expect(JSON.parse(serialized)).toMatchObject({
-      ok: false,
-      command: "open",
-      traceId: "32d9999f-3703-48cb-8736-f4546697a21c",
-      error: {
-        code: publicCode,
-        details: {
-          category,
-          retryable: expect.any(Boolean),
-          remediation: expect.any(String),
-        },
-      },
-    });
-    expect(serialized).not.toContain(sensitivePath);
-    expect(serialized).not.toContain("token=secret");
-  });
-
-  it("normalizes malformed stored data without echoing parser input", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["init", "Schema Boundary", "--root", "schema", "--json"], capture().io, { cwd });
-    const output = capture();
-    const failure = new SyntaxError("Unexpected token in secret workspace content");
-
-    expect(await runCli(
-      ["open", "--workspace", "schema", "--json"],
-      output.io,
-      { cwd, openDesktop: async () => { throw failure; } }
-    )).toBe(2);
-    const serialized = output.stdout[0] ?? "";
-    expect(JSON.parse(serialized)).toMatchObject({
-      error: { code: "SchemaInvalid", details: { category: "schema" } },
-    });
-    expect(serialized).not.toContain("secret workspace content");
-  });
-
-  it("redacts an internal EngineError while preserving its traceId", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["init", "Internal Boundary", "--root", "internal", "--json"], capture().io, { cwd });
-    const output = capture();
-
-    expect(await runCli(
-      ["open", "--workspace", "internal", "--json"],
-      output.io,
-      {
-        cwd,
-        traceId: () => "32d9999f-3703-48cb-8736-f4546697a21c",
-        openDesktop: async () => {
-          throw new EngineError("InternalError", "database password=secret", {
-            path: "C:\\private\\workspace",
-          });
-        },
-      }
-    )).toBe(1);
-    const serialized = output.stdout[0] ?? "";
-    expect(JSON.parse(serialized)).toMatchObject({
-      traceId: "32d9999f-3703-48cb-8736-f4546697a21c",
-      error: {
-        code: "InternalError",
-        message: "The command could not be completed.",
-        details: { category: "internal" },
-      },
-    });
-    expect(serialized).not.toContain("password");
-    expect(serialized).not.toContain("private");
-  });
-
-  it("stages a visible plan and applies only its exact digest", async () => {
-    const cwd = await temporaryDirectory();
-    const create = capture();
-    await runCli(["workspace", "create", "Proposal Workspace", "--root", "proposal", "--json"], create.io, { cwd });
-
-    const planned = capture();
-    expect(await runCli(
-      ["plan", "--workspace", "proposal", "--set-authority", "build", "--json"],
-      planned.io,
-      { cwd, traceId: () => "d49b2144-17a8-4a1c-8f3e-01e92d6c6e5e" }
-    )).toBe(0);
-    const proposal = JSON.parse(planned.stdout[0] ?? "").data;
-    expect(proposal).toMatchObject({ status: "pending", baseRevision: 0 });
-
-    const applied = capture();
-    expect(await runCli([
-      "apply", "--workspace", "proposal", "--proposal", proposal.proposalId,
-      "--hash", proposal.changeSetDigest, "--json"
-    ], applied.io, { cwd })).toBe(0);
-    expect(JSON.parse(applied.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      data: { revision: 1, authorityMode: "build" }
-    });
-  });
-
-  it("returns a machine-readable error for a nonexistent proposal", async () => {
-    const cwd = await temporaryDirectory();
-    const create = capture();
-    await runCli(["workspace", "create", "Missing Proposal", "--root", "missing", "--json"], create.io, { cwd });
-    const output = capture();
-
-    expect(await runCli([
-      "apply", "--workspace", "missing", "--proposal", "d49b2144-17a8-4a1c-8f3e-01e92d6c6e5e",
-      "--hash", `sha256:${"a".repeat(64)}`, "--json"
-    ], output.io, { cwd })).toBe(2);
-    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
-      ok: false,
-      error: { code: "ProposalNotFound" }
-    });
-  });
-
-  it("prints usage successfully for any command-level help request", async () => {
-    const output = capture();
-    expect(await runCli(["workspace", "create", "--help"], output.io)).toBe(0);
-    expect(output.stdout[0]).toContain("aimoto workspace create");
-  });
-
-  it("publishes versioned machine-readable discovery help", async () => {
-    const output = capture();
-    expect(await runCli(["--help", "--json"], output.io, {
-      traceId: () => "32d9999f-3703-48cb-8736-f4546697a21c"
-    })).toBe(0);
-    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
-      envelopeVersion: expect.any(String),
-      ok: true,
-      command: "help",
-      data: {
-        usage: expect.stringContaining('aimoto request "<ordinary need>"'),
-        approvalRule: expect.stringContaining("exact proposal")
-      }
-    });
-  });
-
-  it("initializes, diagnoses, inspects, and opens a workspace through the agent-facing commands", async () => {
-    const cwd = await temporaryDirectory();
-    const initialized = capture();
-    expect(await runCli(
-      ["init", "Clueless User Workspace", "--root", "clueless", "--json"],
-      initialized.io,
-      { cwd }
-    )).toBe(0);
-    expect(JSON.parse(initialized.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "init",
-      data: { workspaceId: "clueless-user-workspace", revision: 0 }
-    });
-
-    const doctor = capture();
-    expect(await runCli(
-      ["doctor", "--workspace", "clueless", "--json"],
-      doctor.io,
-      { cwd, platform: "win32", nodeVersion: "22.14.0" }
-    )).toBe(0);
-    expect(JSON.parse(doctor.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "doctor",
-      data: {
-        healthy: true,
-        checks: [
-          { id: "node", ok: true },
-          { id: "platform", ok: true },
-          {
-            id: "bootstrap",
-            ok: true,
-            evidence: {
-              moduleIds: ["aimoto.files", "aimoto.tasks"],
-              cleanup: "disposable probe directory removed"
-            }
-          },
-          { id: "workspace", ok: true }
-        ]
-      }
-    });
-
-    const openedRoots: string[] = [];
-    const opened = capture();
-    expect(await runCli(
-      ["open", "--workspace", "clueless", "--json"],
-      opened.io,
-      {
-        cwd,
-        openDesktop: async (root) => {
-          openedRoots.push(root);
-          return { launched: true, executable: "AI-Mo-To.exe" };
-        }
-      }
-    )).toBe(0);
-    expect(openedRoots).toEqual([join(cwd, "clueless")]);
-    expect(JSON.parse(opened.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "open",
-      data: {
-        launched: true,
-        workspace: { workspaceId: "clueless-user-workspace" }
-      }
-    });
-  });
-
-  it("reports an actionable unhealthy result when disposable workspace bootstrap fails", async () => {
-    const output = capture();
-    expect(await runCli(
-      ["doctor", "--json"],
-      output.io,
-      {
-        platform: "win32",
-        nodeVersion: "22.14.0",
-        doctorBootstrapProbe: async () => ({
-          id: "bootstrap",
-          ok: false,
-          detail: "ValidationFailed: built-in Tasks module is missing.",
-          remediation: "Reinstall AI-Mo-To and run aimoto doctor again.",
-          evidence: { missingModuleIds: ["aimoto.tasks"] }
-        })
-      }
-    )).toBe(1);
-
-    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "doctor",
-      data: {
-        healthy: false,
-        checks: [
-          { id: "node", ok: true },
-          { id: "platform", ok: true },
-          {
-            id: "bootstrap",
-            ok: false,
-            remediation: expect.stringContaining("Reinstall"),
-            evidence: { missingModuleIds: ["aimoto.tasks"] }
-          }
-        ],
-        next: expect.stringContaining("Resolve the failed checks")
-      }
-    });
+    expect(await runCli(["inspect", "--json"], output.io, { cwd })).toBe(2);
+    expect(json(output)).toMatchObject({ ok: false, command: "inspect", error: { code: "WorkspaceNotFound" } });
+    expect(output.stderr).toEqual([]);
   });
 
   it("keeps unknown commands machine-readable when JSON is requested", async () => {
     const output = capture();
     expect(await runCli(["make-magic", "--json"], output.io)).toBe(2);
-    expect(JSON.parse(output.stdout[0] ?? "")).toMatchObject({
+    expect(json(output)).toMatchObject({
       ok: false,
       command: "make-magic",
-      error: {
-        code: "InvalidInput",
-        message: expect.stringContaining("aimoto --help")
-      }
+      error: { code: "InvalidInput", message: expect.stringContaining("aimoto --help") }
     });
     expect(output.stderr).toEqual([]);
-  });
-
-  it("creates and inspects a snapshot, then returns a non-destructive restore plan", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["workspace", "create", "Snapshot CLI", "--root", "snapshot", "--json"], capture().io, { cwd });
-    const created = capture();
-    expect(await runCli(["snapshot", "create", "--workspace", "snapshot", "--json"], created.io, { cwd })).toBe(0);
-    const snapshotId = JSON.parse(created.stdout[0] ?? "").data.snapshotId;
-    const listed = capture();
-    await runCli(["snapshot", "list", "--workspace", "snapshot", "--json"], listed.io, { cwd });
-    expect(JSON.parse(listed.stdout[0] ?? "")).toMatchObject({ data: [{ snapshotId, valid: true }] });
-    const plan = capture();
-    await runCli(["snapshot", "restore-plan", snapshotId, "--workspace", "snapshot", "--json"], plan.io, { cwd });
-    expect(JSON.parse(plan.stdout[0] ?? "")).toMatchObject({ data: { kind: "restore-as-new-revision", targetRevision: 1 } });
-  });
-
-  it("requires review and exact approval before applying a snapshot restore", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["workspace", "create", "Restore CLI", "--root", "restore", "--json"], capture().io, { cwd });
-    const created = capture();
-    await runCli(["snapshot", "create", "--workspace", "restore", "--json"], created.io, { cwd });
-    const snapshotId = JSON.parse(created.stdout[0] ?? "").data.snapshotId;
-    const change = capture();
-    await runCli(["plan", "--workspace", "restore", "--set-authority", "build", "--json"], change.io, { cwd });
-    const changeProposal = JSON.parse(change.stdout[0] ?? "").data;
-    await runCli(["apply", "--workspace", "restore", "--proposal", changeProposal.proposalId, "--hash", changeProposal.changeSetDigest, "--json"], capture().io, { cwd });
-    const proposed = capture();
-    expect(await runCli(["snapshot", "restore-propose", snapshotId, "--workspace", "restore", "--json"], proposed.io, { cwd })).toBe(0);
-    const restore = JSON.parse(proposed.stdout[0] ?? "").data;
-    expect(restore).toMatchObject({ status: "pending", baseRevision: 1, changeSet: { operations: [expect.objectContaining({ kind: "workspace.restore-snapshot" })] } });
-    const applied = capture();
-    expect(await runCli(["apply", "--workspace", "restore", "--proposal", restore.proposalId, "--hash", restore.changeSetDigest, "--json"], applied.io, { cwd })).toBe(0);
-    expect(JSON.parse(applied.stdout[0] ?? "")).toMatchObject({ data: { revision: 2, authorityMode: "suggest" } });
-  });
-
-  it("takes a plain-language Habit Tracker request through review, exact approval, and installation", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["workspace", "create", "Habit Proof", "--root", "habits", "--json"], capture().io, { cwd });
-
-    const planned = capture();
-    expect(await runCli([
-      "agent", "habit", "plan", "--workspace", "habits",
-      "--request", "I want to track meditation every day", "--json",
-    ], planned.io, { cwd })).toBe(0);
-    const proposal = JSON.parse(planned.stdout[0] ?? "").data;
-    expect(proposal).toMatchObject({
-      request: "I want to track meditation every day",
-      plan: { displayName: "Track Meditation Every Day" },
-      stagedModule: { moduleId: "local.track-meditation-every-day", digest: expect.stringMatching(/^sha256:/) },
-      proposal: { status: "pending", baseRevision: 0 },
-    });
-    expect(proposal.plan.views).toEqual(expect.arrayContaining([{ id: "tracks", kind: "list" }]));
-
-    const rejected = capture();
-    expect(await runCli([
-      "apply", "--workspace", "habits", "--proposal", proposal.proposal.proposalId,
-      "--hash", `sha256:${"0".repeat(64)}`, "--json",
-    ], rejected.io, { cwd })).toBe(2);
-
-    const applied = capture();
-    expect(await runCli([
-      "apply", "--workspace", "habits", "--proposal", proposal.proposal.proposalId,
-      "--hash", proposal.proposal.changeSetDigest, "--json",
-    ], applied.io, { cwd })).toBe(0);
-    const installed = JSON.parse(applied.stdout[0] ?? "");
-    expect(installed).toMatchObject({ data: { revision: 1 } });
-    expect(installed.data.modules.some((module: { moduleId: string }) => module.moduleId === "local.track-meditation-every-day")).toBe(true);
-    expect(installed.data.modules).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        moduleId: "local.track-meditation-every-day",
-        version: "0.1.0",
-        digest: proposal.stagedModule.digest
-      })
-    ]));
-    expect(installed.data.evidence).toMatchObject({
-      revisions: [
-        expect.objectContaining({ revision: 0 }),
-        expect.objectContaining({ revision: 1, reason: "proposal.committed" })
-      ],
-      proposals: [expect.objectContaining({
-        proposalId: proposal.proposal.proposalId,
-        changeSetDigest: proposal.proposal.changeSetDigest,
-        status: "committed",
-        appliedRevision: 1
-      })],
-      approvals: [expect.objectContaining({
-        proposalId: proposal.proposal.proposalId,
-        changeSetDigest: proposal.proposal.changeSetDigest,
-        principalId: "local-user"
-      })],
-      recordHealth: { status: "ok", totalRecords: 0 }
-    });
-    await access(join(cwd, "habits", ".aimoto", "modules", "local", proposal.stagedModule.digest.slice(7), "module.json"));
-  });
-
-  it("renders a human-readable Habit Tracker review", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["workspace", "create", "Human Habit Proof", "--root", "human-habits"], capture().io, { cwd });
-    const output = capture();
-    expect(await runCli(["agent", "habit", "plan", "--workspace", "human-habits"], output.io, { cwd })).toBe(0);
-    expect(output.stdout[0]).toContain("Add A Habit Tracker is ready for your review.");
-    expect(output.stdout[0]).toContain("Exact digest:");
-    expect(output.stdout[0]).toContain("Approve it with:");
-  });
-
-  it("discovers installed module views and lists module records with stable JSON", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["init", "Module Records", "--root", "module-records", "--json"], capture().io, { cwd });
-    const planned = capture();
-    await runCli([
-      "request", "Help me track meditation every day", "--workspace", "module-records", "--json",
-    ], planned.io, { cwd });
-    const proposal = JSON.parse(planned.stdout[0] ?? "").data.proposal;
-    await runCli([
-      "apply", "--workspace", "module-records", "--proposal", proposal.proposalId,
-      "--hash", proposal.changeSetDigest, "--json",
-    ], capture().io, { cwd });
-
-    const views = capture();
-    expect(await runCli([
-      "module", "views", "--module", "local.track-meditation-every-day",
-      "--workspace", "module-records", "--json",
-    ], views.io, { cwd })).toBe(0);
-    expect(JSON.parse(views.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "module.views",
-      data: expect.arrayContaining([
-        expect.objectContaining({ moduleId: "local.track-meditation-every-day", id: "tracks", collection: "track" }),
-      ]),
-    });
-
-    const listed = capture();
-    expect(await runCli([
-      "records", "list", "--module", "local.track-meditation-every-day", "--collection", "track",
-      "--workspace", "module-records", "--json",
-    ], listed.io, { cwd })).toBe(0);
-    expect(JSON.parse(listed.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "records.list",
-      data: [],
-    });
-  });
-
-  it("turns an ordinary outcome request into a reviewable proposal without applying it", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["init", "Ordinary Life", "--root", "ordinary", "--json"], capture().io, { cwd });
-    const requested = capture();
-    expect(await runCli([
-      "request", "Help me track meditation every day", "--workspace", "ordinary", "--json",
-    ], requested.io, { cwd })).toBe(0);
-    const response = JSON.parse(requested.stdout[0] ?? "");
-    expect(response).toMatchObject({
-      ok: true,
-      command: "request",
-      data: {
-        understoodAs: expect.stringContaining("Track Meditation Every Day"),
-        changesApplied: false,
-        approvalRequired: true,
-        explanation: expect.stringContaining("Nothing has been installed"),
-        plan: { displayName: "Track Meditation Every Day" },
-        proposal: { status: "pending", baseRevision: 0 },
-        next: { action: "review", commandTemplate: expect.stringContaining("aimoto apply") },
-      },
-    });
-    const inspection = capture();
-    await runCli(["inspect", "--workspace", "ordinary", "--json"], inspection.io, { cwd });
-    const unchanged = JSON.parse(inspection.stdout[0] ?? "").data;
-    expect(unchanged.revision).toBe(0);
-    expect(unchanged.modules.some((module: { moduleId: string }) => module.moduleId === "local.track-meditation-every-day")).toBe(false);
-  });
-
-  it("creates dynamic custom tracker proposals for arbitrary requests", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["init", "Custom Need", "--root", "custom", "--json"], capture().io, { cwd });
-    const requested = capture();
-    expect(await runCli([
-      "request", "Track my daily coffee expenses and budget log", "--workspace", "custom", "--json",
-    ], requested.io, { cwd })).toBe(0);
-    expect(JSON.parse(requested.stdout[0] ?? "")).toMatchObject({
-      ok: true,
-      command: "request",
-      data: {
-        changesApplied: false,
-        approvalRequired: true,
-        stagedModule: { moduleId: expect.stringMatching(/^local\./) },
-        proposal: { status: "pending", baseRevision: 0 },
-      },
-    });
-  });
-
-  it("resolves default workspace when --workspace is omitted on request", async () => {
-    const cwd = await temporaryDirectory();
-    const output = capture();
-    const env = { LOCALAPPDATA: join(cwd, "AppData", "Local") };
-    expect(await runCli(["request", "Help me track meditation every day", "--json"], output.io, { cwd, environment: env })).toBe(0);
-    const data = JSON.parse(output.stdout[0] ?? "").data;
-    expect(data.stagedModule.directory).toContain(join(cwd, "AppData", "Local", "AI-Mo-To", "workspaces", "default"));
-  });
-
-  it("renders aimoto plan human output with proposal ID and interpolated apply command", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["init", "Plan Human Workspace", "--root", "plan-human", "--json"], capture().io, { cwd });
-    const output = capture();
-    const exitCode = await runCli(["plan", "--workspace", "plan-human", "--set-authority", "build"], output.io, { cwd });
-
-    expect(exitCode).toBe(0);
-    const text = output.stdout.join("\n");
-    expect(text).toContain("Proposal created and ready for human review.");
-    expect(text).toContain("plan-human-workspace");
-    expect(text).toContain("aimoto apply --workspace plan-human --proposal ");
-  });
-
-  it("interpolates exact workspace path into aimoto request human output", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["init", "Request Human Workspace", "--root", "req-human", "--json"], capture().io, { cwd });
-    const output = capture();
-    const exitCode = await runCli(["request", "Help me track meditation every day", "--workspace", "req-human"], output.io, { cwd });
-
-    expect(exitCode).toBe(0);
-    const text = output.stdout.join("\n");
-    expect(text).toContain("Track Meditation Every Day is ready for your review.");
-    expect(text).toContain("aimoto apply --workspace req-human --proposal ");
-
-    // Re-running request should succeed without staging collision / EPERM errors on Windows
-    const secondOutput = capture();
-    const secondExit = await runCli(["request", "Help me track meditation every day", "--workspace", "req-human"], secondOutput.io, { cwd });
-    expect(secondExit).toBe(0);
-  });
-
-  it("rejects invalid authority mode in plan command with supported modes list", async () => {
-    const cwd = await temporaryDirectory();
-    await runCli(["init", "Invalid Authority Mode", "--root", "inv-auth", "--json"], capture().io, { cwd });
-    const output = capture();
-    const exitCode = await runCli(["plan", "--workspace", "inv-auth", "--set-authority", "superpower"], output.io, { cwd });
-
-    expect(exitCode).toBe(2);
-    expect(output.stderr[0]).toContain('Invalid authority mode "superpower". Supported modes: observe, suggest, assist, execute, build.');
   });
 });

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "need": "I need a simple place to track a daily habit. Set it up for me.",
-  "approval": "I approve the exact proposal you showed me. Continue.",
+  "approval": "I approve saving the completed workspace as a new version. Continue.",
   "agentExecutable": "codex",
   "agentArguments": [
     "exec",

@@ -6,9 +6,11 @@ import moduleManifestSchema from "../schemas/module-manifest.schema.json" with {
 import approvalRecordSchema from "../schemas/approval-record.schema.json" with { type: "json" };
 import proposalRecordSchema from "../schemas/proposal-record.schema.json" with { type: "json" };
 import workspaceManifestSchema from "../schemas/workspace-manifest.schema.json" with { type: "json" };
+import workspaceVersionSchema from "../schemas/workspace-version.schema.json" with { type: "json" };
 
 export type ProtocolSchema =
   | "workspace-manifest"
+  | "workspace-version"
   | "module-manifest"
   | "change-set"
   | "proposal-record"
@@ -35,6 +37,7 @@ ajv.addFormat(
 
 const validators: Record<ProtocolSchema, ValidateFunction> = {
   "workspace-manifest": ajv.compile(workspaceManifestSchema),
+  "workspace-version": ajv.compile(workspaceVersionSchema),
   "module-manifest": ajv.compile(moduleManifestSchema),
   "change-set": ajv.compile(changeSetSchema),
   "proposal-record": ajv.compile(proposalRecordSchema),

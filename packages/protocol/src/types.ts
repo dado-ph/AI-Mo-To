@@ -34,29 +34,23 @@ export interface EventRoute {
 }
 
 export interface WorkspaceManifest {
-  schemaVersion: typeof SCHEMA_VERSION;
+  schemaVersion: 2;
   workspaceId: string;
   name: string;
   createdAt: string;
   revision: number;
-  modules: ModulePin[];
-  layout: {
-    homeView: string;
-    views: Array<{
-      id: string;
-      moduleId: string;
-      viewId: string;
-    }>;
-  };
-  capabilities: Array<{
-    capability: string;
-    grantId: string;
-  }>;
-  eventRoutes: EventRoute[];
-  aiAdapter: string;
-  authorityMode: AuthorityMode;
-  contextPolicy: string;
-  snapshotPolicy: string;
+  currentVersionId: string | null;
+}
+
+export interface WorkspaceVersion {
+  schemaVersion: 1;
+  versionId: string;
+  workspaceId: string;
+  revision: number;
+  createdAt: string;
+  message: string;
+  parentVersionId: string | null;
+  fileManifestDigest: string;
 }
 
 export type EffectReversibility =

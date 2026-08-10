@@ -6,8 +6,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
 const preloadSource = resolve(appRoot, "src", "preload.cjs");
 const preloadDestination = resolve(appRoot, "dist", "preload.cjs");
-const builtInModules = resolve(appRoot, "..", "..", "modules");
-const packagedModules = resolve(appRoot, "resources", "modules");
 const agentSkills = resolve(appRoot, "agent-skills");
 const packagedAgentSkills = resolve(appRoot, "resources", "agent-skills");
 
@@ -21,7 +19,5 @@ await mkdir(resolve(appRoot, "dist"), { recursive: true });
 await cp(preloadSource, preloadDestination);
 await cp(tokensSource, tokensDestination);
 try { await cp(xtermCssSource, xtermCssDestination); } catch {}
-await mkdir(dirname(packagedModules), { recursive: true });
-await cp(builtInModules, packagedModules, { recursive: true });
 await mkdir(dirname(packagedAgentSkills), { recursive: true });
 await cp(agentSkills, packagedAgentSkills, { recursive: true });

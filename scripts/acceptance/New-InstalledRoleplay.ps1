@@ -19,7 +19,7 @@ if ($root.StartsWith($repo, [System.StringComparison]::OrdinalIgnoreCase)) {
 }
 
 $manifest = [ordered]@{
-  schemaVersion = 2
+  schemaVersion = 3
   runId = $runId
   startedAt = (Get-Date).ToUniversalTime().ToString("o")
   isolationRoot = $root
@@ -31,7 +31,7 @@ $manifest = [ordered]@{
   }
   phases = [ordered]@{}
 }
-foreach ($name in "install", "plan", "approval", "inspection", "recovery") {
+foreach ($name in "install", "request", "implementation", "approval", "inspection", "recovery") {
   $manifest.phases[$name] = [ordered]@{ status = "pending"; evidence = @() }
 }
 $journeyDirectory = Join-Path $evidence "journey"
@@ -65,8 +65,9 @@ external agent from Workspace root with only this user message:
 
 I need a simple place to track a daily habit. Set it up for me.
 
-Stop when AI-Mo-To presents a consequential proposal. The human must inspect
-and explicitly approve its exact digest before a second agent turn continues.
+Continue until the requested workspace UI and behavior work and have been
+verified. Stop before creating a version. The human must inspect the completed
+result and explicitly approve saving it in a later turn.
 "@ | Set-Content -LiteralPath (Join-Path $root "NEXT.txt") -Encoding utf8
 
 Write-Output $root

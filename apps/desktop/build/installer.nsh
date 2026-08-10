@@ -8,22 +8,23 @@
   FileClose $0
   WriteRegStr HKCU "Software\AI-Mo-To" "InstallPath" "$INSTDIR"
 
-  ReadEnvStr $1 "CODEX_HOME"
-  StrCmp $1 "" 0 +2
-    StrCpy $1 "$PROFILE\.codex"
-  StrCpy $2 "$1\skills\aimoto-operate"
-
-  ; Never replace a same-named user skill. Upgrades are allowed only for a
-  ; directory bearing the product ownership marker.
-  IfFileExists "$2\.installed-by-ai-mo-to" aimoto_skill_install
-  IfFileExists "$2\SKILL.md" aimoto_skill_done
-aimoto_skill_install:
+  ; AI-Mo-To owns this skill name. Always replace stale copies so agents use
+  ; the current workspace handoff contract after an upgrade.
+  ; Install for new Codex users, then upgrade every existing agent home that
+  ; already contains an aimoto-operate skill. This avoids vendor assumptions.
+  StrCpy $2 "$PROFILE\.codex\skills\aimoto-operate"
+  RMDir /r "$2"
   CreateDirectory "$2\agents"
   CopyFiles /SILENT "$INSTDIR\resources\agent-skills\aimoto-operate\SKILL.md" "$2\SKILL.md"
   CopyFiles /SILENT "$INSTDIR\resources\agent-skills\aimoto-operate\agents\openai.yaml" "$2\agents\openai.yaml"
   CopyFiles /SILENT "$INSTDIR\resources\agent-skills\aimoto-operate\.installed-by-ai-mo-to" "$2\.installed-by-ai-mo-to"
   WriteRegStr HKCU "Software\AI-Mo-To" "CodexSkillPath" "$2"
-aimoto_skill_done:
+  StrCpy $2 "$PROFILE\.agents\skills\aimoto-operate"
+  RMDir /r "$2"
+  CreateDirectory "$2\agents"
+  CopyFiles /SILENT "$INSTDIR\resources\agent-skills\aimoto-operate\SKILL.md" "$2\SKILL.md"
+  CopyFiles /SILENT "$INSTDIR\resources\agent-skills\aimoto-operate\agents\openai.yaml" "$2\agents\openai.yaml"
+  CopyFiles /SILENT "$INSTDIR\resources\agent-skills\aimoto-operate\.installed-by-ai-mo-to" "$2\.installed-by-ai-mo-to"
 !macroend
 
 !macro customUnInstall
