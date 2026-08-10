@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import type { WorkspaceInspection } from "@ai-mo-to/engine";
+import type { DesktopWorkspaceVersion } from "../contracts.js";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog.js";
 import { Button } from "./ui/button.js";
 import { Badge } from "./ui/badge.js";
@@ -117,10 +118,9 @@ export function WorkspaceManagerDrawer({
   const [renamingRoot, setRenamingRoot] = useState<string | null>(null);
   const [renamedName, setRenamedName] = useState("");
 
-  // Snapshots / Rollback state
-  const [viewingSnapshotsRoot, setViewingSnapshotsRoot] = useState<string | null>(null);
-  const [snapshots, setSnapshots] = useState<any[]>([]);
-  const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+  const [viewingVersionsRoot, setViewingVersionsRoot] = useState<string | null>(null);
+  const [versions, setVersions] = useState<readonly DesktopWorkspaceVersion[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
 
   const api = window.aimoto;
 
@@ -181,28 +181,27 @@ export function WorkspaceManagerDrawer({
     } catch {}
   };
 
-  const handleLoadSnapshots = async (root: string) => {
-    if (!api?.listSnapshots) return;
-    setViewingSnapshotsRoot(root);
-    setLoadingSnapshots(true);
+  const handleLoadVersions = async (root: string) => {
+    if (!api?.listWorkspaceVersions) return;
+    setViewingVersionsRoot(root);
+    setLoadingVersions(true);
     try {
-      const list = await api.listSnapshots(root);
-      setSnapshots(list as any[]);
+      setVersions(await api.listWorkspaceVersions(root));
     } catch {
-      setSnapshots([]);
+      setVersions([]);
     } finally {
-      setLoadingSnapshots(false);
+      setLoadingVersions(false);
     }
   };
 
-  const handleRestoreSnapshot = async (root: string, snapshotId: string) => {
-    if (!api?.restoreSnapshot) return;
+  const handleRestoreVersion = async (root: string, versionId: string) => {
+    if (!api?.restoreWorkspaceVersion) return;
     try {
-      const restored = await api.restoreSnapshot(root, snapshotId);
-      setViewingSnapshotsRoot(null);
+      await api.restoreWorkspaceVersion(root, versionId);
+      setViewingVersionsRoot(null);
       await onRefreshWorkspaces();
       if (activeWorkspace?.root === root) {
-        onSelectWorkspace(restored);
+        onSelectWorkspace(await api.inspectWorkspace(root));
       }
     } catch {}
   };
@@ -389,21 +388,8 @@ export function WorkspaceManagerDrawer({
                     </div>
                   </div>
 
-                  {/* Surface Badges */}
-                  <div className="flex flex-wrap gap-1 mb-3">
-                    {ws.modules.slice(0, 4).map((mod) => (
-                      <span
-                        key={mod.moduleId}
-                        className="rounded border border-border/40 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground font-mono"
-                      >
-                        {mod.moduleId.replace("aimoto.", "")}
-                      </span>
-                    ))}
-                    {ws.modules.length > 4 && (
-                      <span className="text-[10px] text-muted-foreground font-mono self-center">
-                        +{ws.modules.length - 4} more
-                      </span>
-                    )}
+                  <div className="mb-3 text-[11px] text-muted-foreground">
+                    {ws.currentVersionId ? `Current version: ${ws.currentVersionId}` : "No approved versions yet"}
                   </div>
 
                   {/* Interactive Action Bar */}
@@ -440,9 +426,9 @@ export function WorkspaceManagerDrawer({
                         <Pencil className="size-3.5" />
                       </button>
                       <button
-                        onClick={() => void handleLoadSnapshots(ws.root)}
+                        onClick={() => void handleLoadVersions(ws.root)}
                         className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition"
-                        title="View Snapshots & Rollback"
+                        title="View Versions & Restore"
                       >
                         <History className="size-3.5" />
                       </button>
@@ -456,43 +442,42 @@ export function WorkspaceManagerDrawer({
                     )}
                   </div>
 
-                  {/* Snapshots / Rollback Sub-Panel */}
-                  {viewingSnapshotsRoot === ws.root && (
+                  {viewingVersionsRoot === ws.root && (
                     <div className="mt-3 rounded-lg border border-border/80 bg-background/80 p-3 text-xs space-y-2">
                       <div className="flex items-center justify-between font-semibold">
                         <span className="flex items-center gap-1 text-primary">
-                          <RotateCcw className="size-3.5" /> Snapshots / Rollback
+                          <RotateCcw className="size-3.5" /> Versions / Restore
                         </span>
                         <button
-                          onClick={() => setViewingSnapshotsRoot(null)}
+                          onClick={() => setViewingVersionsRoot(null)}
                           className="text-muted-foreground hover:text-foreground text-[10px]"
                         >
                           Close
                         </button>
                       </div>
 
-                      {loadingSnapshots ? (
-                        <div className="text-muted-foreground py-2 text-[11px]">Loading snapshots...</div>
-                      ) : snapshots.length === 0 ? (
-                        <div className="text-muted-foreground py-1 text-[11px]">No structural snapshots recorded yet.</div>
+                      {loadingVersions ? (
+                        <div className="text-muted-foreground py-2 text-[11px]">Loading versions...</div>
+                      ) : versions.length === 0 ? (
+                        <div className="text-muted-foreground py-1 text-[11px]">No approved versions yet.</div>
                       ) : (
                         <div className="space-y-1 max-h-36 overflow-y-auto">
-                          {snapshots.map((snap) => (
+                          {versions.map((version) => (
                             <div
-                              key={snap.snapshotId ?? snap.id}
+                              key={version.versionId}
                               className="flex items-center justify-between rounded bg-muted/40 p-1.5 font-mono text-[11px]"
                             >
                               <div>
-                                <span className="font-semibold text-foreground">rev {snap.revision}</span>
+                                <span className="font-semibold text-foreground">rev {version.revision}</span>
                                 <span className="ml-2 text-muted-foreground text-[10px]">
-                                  {snap.createdAt ? new Date(snap.createdAt).toLocaleTimeString() : ""}
+                                  {version.message}
                                 </span>
                               </div>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 className="h-6 text-[10px] px-2"
-                                onClick={() => void handleRestoreSnapshot(ws.root, snap.snapshotId ?? snap.id)}
+                                onClick={() => void handleRestoreVersion(ws.root, version.versionId)}
                               >
                                 Restore
                               </Button>

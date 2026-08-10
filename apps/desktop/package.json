@@ -63,10 +63,6 @@
     ],
     "extraResources": [
       {
-        "from": "resources/modules",
-        "to": "modules"
-      },
-      {
         "from": "resources/agent-skills",
         "to": "agent-skills"
       },

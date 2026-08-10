@@ -1,4 +1,4 @@
-import type { WorkspaceInspection } from "@ai-mo-to/engine";
+import type { ImplementationBrief, WorkspaceInspection } from "@ai-mo-to/engine";
 import { WorkspaceEngine } from "@ai-mo-to/engine";
 import { runCli } from "@ai-mo-to/cli";
 import { createRequire } from "node:module";
@@ -6,7 +6,7 @@ import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DesktopApi } from "./contracts.js";
+import type { DesktopApi, DesktopWorkspaceVersion } from "./contracts.js";
 
 /** Minimal Electron-shaped API. Kept structural so the domain code stays testable without Electron. */
 export interface ElectronMainRuntime {
@@ -25,13 +25,10 @@ interface WorkspaceCreator extends WorkspaceInspector {
   createWorkspace(input: { root: string; name: string; workspaceId: string }): Promise<WorkspaceInspection>;
 }
 
-interface DesktopWorkspaceEngine extends WorkspaceInspector {
-  listBuiltInRecords(root: string, moduleId: "aimoto.files" | "aimoto.tasks"): Promise<readonly unknown[]>;
-  executeBuiltInCommand(input: {
-    root: string; moduleId: string; command: string; input: Record<string, unknown>;
-  }): Promise<unknown>;
-  listInstalledModuleViews(root: string, moduleId: string): Promise<readonly unknown[]>;
-  listInstalledModuleRecords(root: string, moduleId: string, collectionId: string): Promise<readonly unknown[]>;
+interface DesktopWorkspaceEngine extends WorkspaceCreator {
+  prepareImplementationRequest(input: { root: string; request: string }): Promise<ImplementationBrief>;
+  listWorkspaceVersions(root: string): Promise<readonly DesktopWorkspaceVersion[]>;
+  restoreWorkspaceVersion(root: string, versionId: string): Promise<DesktopWorkspaceVersion>;
 }
 
 /** A product-owned path, stable across launches and distinct from user-selected workspaces. */
@@ -164,7 +161,7 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
     openWorkspaceFolder: async (root) => { await openWorkspaceFolder(root); },
     createWorkspace: async (name, rootPath) => {
       const root = rootPath ?? join(process.env.LOCALAPPDATA ?? process.cwd(), "AI-Mo-To", "workspaces", name.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
-      return (engine as any).createWorkspace ? (engine as any).createWorkspace({ root, name, workspaceId: name.toLowerCase().replace(/[^a-z0-9]+/g, "-") }) : engine.inspectWorkspace(root);
+      return engine.createWorkspace({ root, name, workspaceId: name.toLowerCase().replace(/[^a-z0-9]+/g, "-") });
     },
     renameWorkspace: async (root, newName) => {
       const manifestPath = join(root, ".aimoto", "workspace.json");
@@ -174,39 +171,9 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
       return engine.inspectWorkspace(root);
     },
     deleteWorkspace: async () => {},
-    listSnapshots: async (root) => (engine as any).listSnapshots ? (engine as any).listSnapshots(root) : [],
-    restoreSnapshot: async (root) => engine.inspectWorkspace(root),
-    listRecords: (root, moduleId, collectionId) =>
-      (moduleId === "aimoto.files" || moduleId === "aimoto.tasks"
-        ? engine.listBuiltInRecords(root, moduleId as "aimoto.files" | "aimoto.tasks")
-        : engine.listInstalledModuleRecords(root, moduleId, collectionId ?? "items")) as ReturnType<DesktopApi["listRecords"]>,
-    executeCommand: (input) =>
-      engine.executeBuiltInCommand(input as Parameters<typeof engine.executeBuiltInCommand>[0]) as ReturnType<DesktopApi["executeCommand"]>,
-    listModuleViews: (root, moduleId) => engine.listInstalledModuleViews(root, moduleId) as ReturnType<DesktopApi["listModuleViews"]>,
-    requestOutcome: async (root, request) => {
-      let stdout = "";
-      const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
-      await runCli(["request", request, "--workspace", root, "--json"], io);
-      const envelope = JSON.parse(stdout);
-      if (!envelope.ok) throw new Error(envelope.error?.message ?? "Request failed");
-      return {
-        request,
-        plan: {
-          displayName: envelope.data.plan.displayName,
-          userOutcomes: envelope.data.plan.userOutcomes
-        },
-        proposal: {
-          proposalId: envelope.data.proposal.proposalId,
-          changeSetDigest: envelope.data.proposal.changeSetDigest
-        }
-      };
-    },
-    applyProposal: async (root, proposalId, digest) => {
-      let stdout = "";
-      const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
-      await runCli(["apply", "--workspace", root, "--proposal", proposalId, "--hash", digest, "--json"], io);
-      return engine.inspectWorkspace(root);
-    },
+    requestImplementation: (root, request) => engine.prepareImplementationRequest({ root, request }),
+    listWorkspaceVersions: (root) => engine.listWorkspaceVersions(root),
+    restoreWorkspaceVersion: (root, versionId) => engine.restoreWorkspaceVersion(root, versionId),
     createTerminal: async (root) => ({ sessionId: `term-stub-${root?.length ?? 0}` }),
     writeTerminal: async () => {},
     onTerminalData: () => {},
@@ -240,9 +207,7 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
       : (process.env.APPDATA ? join(process.env.APPDATA, "AI-Mo-To") : process.cwd());
     const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const root = typeof rootPath === "string" && rootPath.trim() ? rootPath.trim() : join(storageRoot, "workspaces", slug);
-    if ((engine as any).createWorkspace) {
-      await (engine as any).createWorkspace({ root, name: name.trim(), workspaceId: slug });
-    }
+    await engine.createWorkspace({ root, name: name.trim(), workspaceId: slug });
     await scanAllWorkspaces(storageRoot, engine);
     return engine.inspectWorkspace(root);
   });
@@ -274,20 +239,6 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
     } catch {}
     return { ok: true };
   });
-  runtime.ipcMain.handle("snapshots:list", async (_event: unknown, root: unknown) => {
-    if (typeof root !== "string") throw new Error("workspace root must be a string");
-    return (engine as any).listSnapshots ? (engine as any).listSnapshots(root) : [];
-  });
-  runtime.ipcMain.handle("snapshots:restore", async (_event: unknown, root: unknown, snapshotId: unknown) => {
-    if (typeof root !== "string" || typeof snapshotId !== "string") throw new Error("root and snapshotId required");
-    if ((engine as any).createSnapshotRestoreProposal) {
-      const prop = await (engine as any).createSnapshotRestoreProposal({ root, snapshotId });
-      let stdout = "";
-      const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
-      await runCli(["apply", "--workspace", root, "--proposal", prop.proposalId, "--hash", prop.changeSetDigest, "--json"], io);
-    }
-    return engine.inspectWorkspace(root);
-  });
   runtime.ipcMain.handle("workspace:select", async () => {
     const defaultPath = process.env.LOCALAPPDATA
       ? join(process.env.LOCALAPPDATA, "AI-Mo-To", "workspaces")
@@ -298,47 +249,17 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
   });
   runtime.ipcMain.handle("workspace:request", async (_event: unknown, root: unknown, request: unknown) => {
     if (typeof root !== "string" || typeof request !== "string") throw new Error("workspace root and request must be strings");
-    let stdout = "";
-    const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
-    await runCli(["request", request, "--workspace", root, "--json"], io);
-    const envelope = JSON.parse(stdout);
-    if (!envelope.ok) throw new Error(envelope.error?.message ?? "Request failed");
-    return {
-      request,
-      plan: {
-        displayName: envelope.data.plan.displayName,
-        userOutcomes: envelope.data.plan.userOutcomes
-      },
-      proposal: {
-        proposalId: envelope.data.proposal.proposalId,
-        changeSetDigest: envelope.data.proposal.changeSetDigest
-      }
-    };
+    return engine.prepareImplementationRequest({ root, request });
   });
-  runtime.ipcMain.handle("workspace:apply", async (_event: unknown, root: unknown, proposalId: unknown, digest: unknown) => {
-    if (typeof root !== "string" || typeof proposalId !== "string" || typeof digest !== "string") {
-      throw new Error("workspace root, proposalId, and digest must be strings");
+  runtime.ipcMain.handle("versions:list", async (_event: unknown, root: unknown) => {
+    if (typeof root !== "string") throw new Error("workspace root must be a string");
+    return engine.listWorkspaceVersions(root);
+  });
+  runtime.ipcMain.handle("versions:restore", async (_event: unknown, root: unknown, versionId: unknown) => {
+    if (typeof root !== "string" || typeof versionId !== "string") {
+      throw new Error("workspace root and version id must be strings");
     }
-    let stdout = "";
-    const io = { stdout: (m: string) => { stdout += m; }, stderr: () => {} };
-    await runCli(["apply", "--workspace", root, "--proposal", proposalId, "--hash", digest, "--json"], io);
-    return engine.inspectWorkspace(root);
-  });
-  runtime.ipcMain.handle("records:list", async (_event: unknown, root: unknown, moduleId: unknown, collectionId?: unknown) => {
-    if (typeof root !== "string" || typeof moduleId !== "string") throw new Error("workspace root and module id must be strings");
-    if (moduleId === "aimoto.files" || moduleId === "aimoto.tasks") {
-      return engine.listBuiltInRecords(root, moduleId);
-    }
-    return engine.listInstalledModuleRecords(root, moduleId, typeof collectionId === "string" ? collectionId : "items");
-  });
-  runtime.ipcMain.handle("records:execute", async (_event: unknown, input: unknown) => {
-    if (!input || typeof input !== "object") throw new Error("command input must be an object");
-    const command = input as Parameters<DesktopWorkspaceEngine["executeBuiltInCommand"]>[0];
-    return engine.executeBuiltInCommand(command);
-  });
-  runtime.ipcMain.handle("module:views", async (_event: unknown, root: unknown, moduleId: unknown) => {
-    if (typeof root !== "string" || typeof moduleId !== "string") throw new Error("workspace root and module id must be strings");
-    return engine.listInstalledModuleViews(root, moduleId);
+    return engine.restoreWorkspaceVersion(root, versionId);
   });
 
   const activeTerminals = new Map<string, any>();
@@ -451,27 +372,10 @@ export async function exitElectronCli(exitCode: number, cliProcess: CliProcess =
   return cliProcess.exit(exitCode);
 }
 
-/**
- * Points engine operations at Electron's unpacked product resources.
- * This must run for both the graphical app and `AI-Mo-To.exe --cli`; the CLI
- * can create workspaces before Electron reaches its ready state.
- */
-export function configurePackagedResources(
-  isPackaged: boolean,
-  resourcesPath: string | undefined,
-  environment: NodeJS.ProcessEnv = process.env
-): void {
-  if (isPackaged && resourcesPath) {
-    environment.AIMOTO_BUILTIN_MODULES_DIR = join(resourcesPath, "modules");
-  }
-}
-
 /** Starts the real Electron app while preserving a small, testable boundary around Electron itself. */
 export async function launchDesktop(): Promise<void> {
   const require = createRequire(import.meta.url);
   const runtime = require("electron") as ElectronRuntime;
-  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-  configurePackagedResources(runtime.app.isPackaged, resourcesPath);
   const engine = new WorkspaceEngine();
   await runtime.app.whenReady();
   const requestedValue = process.env.AIMOTO_LAUNCH_WORKSPACE ?? workspaceRootFromArgs(process.argv);
@@ -496,10 +400,6 @@ export async function launchDesktop(): Promise<void> {
 if (process.versions.electron) {
   const require = createRequire(import.meta.url);
   const { app } = require("electron") as { app: ElectronApplication };
-  configurePackagedResources(
-    app.isPackaged,
-    (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
-  );
   const cliMarker = process.argv.indexOf("--cli");
   if (cliMarker >= 0) {
     void runCli(process.argv.slice(cliMarker + 1), {
