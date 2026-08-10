@@ -4,15 +4,31 @@ import { runCli } from "@ai-mo-to/cli";
 import { createRequire } from "node:module";
 import { access, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { exec } from "node:child_process";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { DesktopApi, DesktopWorkspaceVersion } from "./contracts.js";
 
 /** Minimal Electron-shaped API. Kept structural so the domain code stays testable without Electron. */
+interface ThumbnailImage {
+  toPNG(): Buffer;
+}
+
+interface ThumbnailWindow {
+  loadFile(file: string): Promise<void>;
+  webContents?: { capturePage(options?: { stayHidden?: boolean }): Promise<ThumbnailImage> };
+  close?(): void;
+}
+
 export interface ElectronMainRuntime {
   ipcMain: { handle(channel: string, listener: (...args: unknown[]) => unknown): void };
   dialog: { showOpenDialog(options: { defaultPath?: string; properties: string[] }): Promise<{ canceled: boolean; filePaths: string[] }> };
-  BrowserWindow: new (options: { webPreferences: { contextIsolation: true; sandbox: true; preload: string } }) => { loadFile(file: string): Promise<void> };
+  BrowserWindow: new (options: {
+    width?: number;
+    height?: number;
+    show?: boolean;
+    backgroundColor?: string;
+    webPreferences: { contextIsolation: true; sandbox: true; preload?: string };
+  }) => ThumbnailWindow;
   shell?: { openPath(path: string): Promise<string> };
 }
 
@@ -152,18 +168,64 @@ export async function openWorkspaceFolder(root: string, runtime?: ElectronMainRu
   });
 }
 
-/** Returns optional workspace-owned artwork and an app entry page for the shell. */
-export async function workspacePresentation(root: string): Promise<{ thumbnailUrl?: string; entryUrl?: string }> {
-  const find = async (candidates: readonly string[]) => {
-    for (const candidate of candidates) {
-      const path = join(root, candidate);
-      try { await access(path); return pathToFileURL(path).href; } catch {}
-    }
+/** Resolves the UI layouts agents are instructed to create, in preference order. */
+export async function findWorkspaceEntrypoint(root: string): Promise<string | undefined> {
+  for (const candidate of ["index.html", "ui/index.html", "public/index.html"]) {
+    const path = join(root, candidate);
+    try { await access(path); return path; } catch {}
+  }
+  return undefined;
+}
+
+async function findWorkspaceThumbnail(root: string): Promise<string | undefined> {
+  for (const candidate of [".aimoto/thumbnail.png", "thumbnail.png", "preview.png", "assets/thumbnail.png", "assets/preview.png"]) {
+    const path = join(root, candidate);
+    try { await access(path); return path; } catch {}
+  }
+  return undefined;
+}
+
+/** Creates a local preview only when a workspace has not supplied one. */
+export async function createWorkspaceThumbnail(
+  entrypoint: string,
+  thumbnailPath: string,
+  runtime?: ElectronMainRuntime
+): Promise<string | undefined> {
+  if (!runtime) return undefined;
+  let window: ThumbnailWindow | undefined;
+  try {
+    window = new runtime.BrowserWindow({
+      width: 1200,
+      height: 800,
+      show: false,
+      backgroundColor: "#090b10",
+      webPreferences: { contextIsolation: true, sandbox: true }
+    });
+    await window.loadFile(entrypoint);
+    if (!window.webContents) throw new Error("Electron window does not support page capture.");
+    const image = await window.webContents.capturePage({ stayHidden: true });
+    await mkdir(dirname(thumbnailPath), { recursive: true });
+    await writeFile(thumbnailPath, image.toPNG());
+    return thumbnailPath;
+  } catch {
+    // A broken workspace UI must not prevent opening its folder or shell.
     return undefined;
+  } finally {
+    window?.close?.();
+  }
+}
+
+/** Returns optional workspace-owned artwork and an app entry page for the shell. */
+export async function workspacePresentation(root: string, runtime?: ElectronMainRuntime): Promise<{ thumbnailUrl?: string; entryUrl?: string }> {
+  const entrypoint = await findWorkspaceEntrypoint(root);
+  let thumbnail = await findWorkspaceThumbnail(root);
+  if (!thumbnail && entrypoint) {
+    thumbnail = await createWorkspaceThumbnail(entrypoint, join(root, ".aimoto", "thumbnail.png"), runtime);
+  }
+  return {
+    ...(thumbnail ? { thumbnailUrl: pathToFileURL(thumbnail).href } : {}),
+    ...(entrypoint ? { entryUrl: pathToFileURL(entrypoint).href } : {})
   };
-  const thumbnailUrl = await find([".aimoto/thumbnail.png", "thumbnail.png", "preview.png", "assets/thumbnail.png", "assets/preview.png"]);
-  const entryUrl = await find(["index.html", "ui/index.html"]);
-  return { ...(thumbnailUrl ? { thumbnailUrl } : {}), ...(entryUrl ? { entryUrl } : {}) };
 }
 
 export async function scanAllWorkspaces(storageRoot: string, engine: WorkspaceInspector): Promise<WorkspaceInspection[]> {
@@ -276,7 +338,7 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
   });
   runtime.ipcMain.handle("workspace:presentation", async (_event: unknown, root: unknown) => {
     if (typeof root !== "string") throw new Error("workspace root must be a string");
-    return workspacePresentation(root);
+    return workspacePresentation(root, runtime);
   });
   runtime.ipcMain.handle("workspace:openFolder", async (_event: unknown, root: unknown) => {
     if (typeof root !== "string") throw new Error("workspace root must be a string");

@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("aimoto", {
   selectWorkspace: () => ipcRenderer.invoke("workspace:select"),
   inspectWorkspace: (root) => ipcRenderer.invoke("workspace:inspect", root),
   listAllWorkspaces: () => ipcRenderer.invoke("workspace:listAll"),
+  getWorkspacePresentation: (root) => ipcRenderer.invoke("workspace:presentation", root),
   openWorkspaceFolder: (root) => ipcRenderer.invoke("workspace:openFolder", root),
   createWorkspace: (name, rootPath) => ipcRenderer.invoke("workspace:create", name, rootPath),
   renameWorkspace: (root, newName) => ipcRenderer.invoke("workspace:rename", root, newName),

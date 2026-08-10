@@ -65,6 +65,7 @@ describe("workspace implementation handoff", () => {
     expect(brief.instructions).toContain("Keep data local-first.");
     expect(brief.instructions).toContain("Build a garden planner");
     expect(brief.instructions).toContain("prototype");
+    expect(brief.instructions).toContain("public/index.html");
     expect(brief.instructions.endsWith(
       `AI-Mo-To has not built this workspace. You must now implement the workspace in ${resolve(root)}. Continue until the requested UI and functions work.`
     )).toBe(true);

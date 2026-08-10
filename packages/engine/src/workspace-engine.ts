@@ -86,7 +86,7 @@ export function selectImplementationRules(input: {
   const rules = [
     `Work directly beneath the canonical workspace root: ${input.workspaceRoot}.`,
     "Do not write application files inside .aimoto/versions; that directory is reserved for explicit user-approved captures.",
-    "Implement a real interactive UI with connected callbacks or scripts, suitable first-use, empty, loading, and error states, and only the files this workspace needs.",
+    "Implement a real interactive UI with connected callbacks or scripts, suitable first-use, empty, loading, and error states, and only the files this workspace needs. Put its launch page at index.html, ui/index.html, or public/index.html so AI-Mo-To can open it and generate a thumbnail. Keep every asset referenced by that page beneath the workspace root.",
     "Use Shadcn components where suitable, and verify the requested interface and behavior before reporting completion or asking whether to create a version.",
   ];
   const notes = input.notes.map((note) => note.trim()).filter(Boolean);
