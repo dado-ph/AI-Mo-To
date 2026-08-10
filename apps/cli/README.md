@@ -1,38 +1,31 @@
 # AI-Mo-To CLI
 
-`aimoto` is the command-line way to create, inspect, and evolve a local AI-Mo-To workspace.
+`aimoto` creates a local workspace, returns an implementation brief to a coding agent, and records filesystem versions only after explicit user approval.
 
-It has one simple rule: a request can prepare a change, but only `apply` can commit it, and `apply` requires the exact proposal ID and digest that a person has reviewed.
-
-## Start a workspace
+## Create a workspace and request an implementation
 
 ```powershell
 aimoto workspace create "My Workspace" --root ./my-workspace
-aimoto inspect --workspace ./my-workspace
+aimoto request "Create a project tracker with a weekly view" --workspace ./my-workspace
 ```
 
-## Ask for a workspace feature
+`request` does not classify the need, generate or install a module, change application files, or create a version. Its JSON envelope contains `data.implementationBrief`, including the canonical workspace root, the requested outcome, and the implementation instructions. The coding agent implements directly beneath that root.
 
-Use `request` for a direct local request:
+## Capture an approved version
+
+After the implementation works, the agent must ask the user whether to capture it. Only after the user explicitly confirms should the agent run:
 
 ```powershell
-aimoto request "Help me track meditation every day" --workspace ./my-workspace
+aimoto version create --workspace ./my-workspace --message "Add weekly project tracker"
 ```
 
-Or let a configured Codex CLI agent build a feature in an isolated generated-app repository:
+List or restore versions with:
 
 ```powershell
-aimoto request "Create a project tracker with a weekly view" --workspace ./my-workspace --agent
+aimoto version list --workspace ./my-workspace
+aimoto version restore <version-id> --workspace ./my-workspace
 ```
 
-Both commands return a proposal. Read the proposed changes, requested capabilities, proposal ID, and SHA-256 digest. Do not treat a request as approval.
-
-## Apply a reviewed proposal
-
-```powershell
-aimoto apply --workspace ./my-workspace --proposal <proposal-id> --hash <sha256:digest>
-```
-
-AI-Mo-To rejects a changed, stale, missing, or already-applied proposal. It also creates a pre-apply recovery snapshot before committing a workspace change.
+Restoring a capture preserves version history and records the restored state as a new version.
 
 Use `aimoto --help --json` for the machine-readable command contract, or see the [full CLI guide](../../docs/manual/cli.md).
