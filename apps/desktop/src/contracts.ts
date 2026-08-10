@@ -32,6 +32,7 @@ export interface DesktopApi {
   restoreWorkspaceVersion(root: string, versionId: string): Promise<DesktopWorkspaceVersion>;
   createTerminal(root?: string): Promise<{ sessionId: string }>;
   writeTerminal(sessionId: string, data: string): Promise<void>;
-  onTerminalData(listener: (data: { sessionId: string; chunk: string }) => void): void;
+  closeTerminal(sessionId: string): Promise<void>;
+  onTerminalData(listener: (data: { sessionId: string; chunk: string }) => void): () => void;
   resizeTerminal(sessionId: string, cols: number, rows: number): Promise<void>;
 }

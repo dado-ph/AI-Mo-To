@@ -3,7 +3,7 @@ import "../../../packages/ui-primitives/src/tokens.css";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowLeft, ChevronLeft, ChevronRight, FolderOpen, Maximize2 } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, FolderOpen, Maximize2, Minimize2, Minus, Plus, X } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { WorkspaceInspection } from "@ai-mo-to/engine";
@@ -14,17 +14,25 @@ import { WorkspaceManagerDrawer } from "./components/workspace-manager-drawer.js
 const api = window.aimoto;
 const appIcon = new URL("../build/icon.png", import.meta.url).href;
 
+interface TerminalTab {
+  id: string;
+  sessionId: string;
+  label: string;
+}
+
 function App() {
   const [workspace, setWorkspace] = useState<WorkspaceInspection>();
   const [workspaces, setWorkspaces] = useState<WorkspaceInspection[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [presentations, setPresentations] = useState<Record<string, WorkspacePresentation>>({});
   const [terminalStage, setTerminalStage] = useState<"hidden" | "partial" | "full">("hidden");
-  const terminalHost = useRef<HTMLDivElement>(null);
-  const terminal = useRef<Terminal | undefined>(undefined);
-  const fitAddon = useRef<FitAddon | undefined>(undefined);
-  const sessionId = useRef<string | undefined>(undefined);
-  const pendingInput = useRef<string[]>([]);
+  const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  const [activeTerminalId, setActiveTerminalId] = useState<string>();
+  const [terminalError, setTerminalError] = useState<string>();
+  const terminalHosts = useRef(new Map<string, HTMLDivElement>());
+  const terminals = useRef(new Map<string, { terminal: Terminal; fit: FitAddon; sessionId: string }>());
+  const pendingOutput = useRef(new Map<string, string[]>());
+  const terminalTabsRef = useRef<TerminalTab[]>([]);
   const terminalVisible = terminalStage !== "hidden";
 
   const refreshAllWorkspaces = async () => {
@@ -33,13 +41,41 @@ function App() {
     setSelectedIndex(index => Math.min(index, Math.max(0, all.length - 1)));
   };
   const syncTerminalDimensions = () => {
-    if (!fitAddon.current || !terminal.current) return;
+    if (!activeTerminalId) return;
+    const active = terminals.current.get(activeTerminalId);
+    if (!active) return;
     try {
-      fitAddon.current.fit();
-      const cols = terminal.current.cols;
-      const rows = terminal.current.rows;
-      if (sessionId.current && cols > 0 && rows > 0) void api.resizeTerminal(sessionId.current, cols, rows);
+      active.fit.fit();
+      const { cols, rows } = active.terminal;
+      if (cols > 0 && rows > 0) void api.resizeTerminal(active.sessionId, cols, rows);
     } catch {}
+  };
+
+  const addTerminalTab = async () => {
+    setTerminalError(undefined);
+    try {
+      const { sessionId } = await api.createTerminal(workspace?.root);
+      const tab = { id: sessionId, sessionId, label: workspace?.name ?? "Workspaces" };
+      setTerminalTabs(current => [...current, tab]);
+      setActiveTerminalId(tab.id);
+      setTerminalStage(stage => stage === "hidden" ? "partial" : stage);
+    } catch {
+      setTerminalError("Could not start a terminal session.");
+    }
+  };
+
+  const closeTerminalTab = (id: string) => {
+    const tab = terminalTabsRef.current.find(item => item.id === id);
+    if (!tab) return;
+    terminals.current.get(id)?.terminal.dispose();
+    terminals.current.delete(id);
+    pendingOutput.current.delete(id);
+    void api.closeTerminal(tab.sessionId);
+    setTerminalTabs(current => {
+      const next = current.filter(item => item.id !== id);
+      setActiveTerminalId(active => active === id ? next.at(-1)?.id : active);
+      return next;
+    });
   };
 
   useEffect(() => { void refreshAllWorkspaces(); }, []);
@@ -57,29 +93,37 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedIndex, workspace, workspaces]);
+  useEffect(() => { terminalTabsRef.current = terminalTabs; }, [terminalTabs]);
+  useEffect(() => api.onTerminalData(({ sessionId, chunk }) => {
+    const tab = terminalTabsRef.current.find(item => item.sessionId === sessionId);
+    if (!tab) return;
+    const instance = terminals.current.get(tab.id)?.terminal;
+    if (instance) instance.write(chunk);
+    else pendingOutput.current.set(tab.id, [...(pendingOutput.current.get(tab.id) ?? []), chunk]);
+  }), []);
   useEffect(() => {
-    if (!terminalVisible || !terminalHost.current || terminal.current) return;
-    const fit = new FitAddon();
-    const next = new Terminal({ fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace', fontSize: 14, cursorBlink: true, convertEol: true, theme: { background: "#0c0e11", foreground: "#f3f5f7", cursor: "#f3f5f7", selectionBackground: "#334155" } });
-    next.loadAddon(fit); next.open(terminalHost.current); terminal.current = next; fitAddon.current = fit;
-    api.onTerminalData(({ sessionId: id, chunk }) => { if (id === sessionId.current) next.write(chunk); });
-    next.onData(data => { if (sessionId.current) void api.writeTerminal(sessionId.current, data); else pendingInput.current.push(data); });
-    requestAnimationFrame(() => { syncTerminalDimensions(); next.focus(); });
-    return () => { next.dispose(); terminal.current = undefined; fitAddon.current = undefined; };
-  }, [terminalVisible]);
+    for (const tab of terminalTabs) {
+      const host = terminalHosts.current.get(tab.id);
+      if (!host || terminals.current.has(tab.id)) continue;
+      const fit = new FitAddon();
+      const terminal = new Terminal({ fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace', fontSize: 14, cursorBlink: true, convertEol: true, theme: { background: "#0c0e11", foreground: "#f3f5f7", cursor: "#f3f5f7", selectionBackground: "#334155" } });
+      terminal.loadAddon(fit); terminal.open(host);
+      terminal.onData(data => void api.writeTerminal(tab.sessionId, data));
+      terminals.current.set(tab.id, { terminal, fit, sessionId: tab.sessionId });
+      for (const chunk of pendingOutput.current.get(tab.id) ?? []) terminal.write(chunk);
+      pendingOutput.current.delete(tab.id);
+    }
+  }, [terminalTabs]);
+  useEffect(() => () => {
+    for (const { terminal } of terminals.current.values()) terminal.dispose();
+  }, []);
   useEffect(() => {
-    if (!terminalVisible || !terminalHost.current) return;
+    const host = activeTerminalId ? terminalHosts.current.get(activeTerminalId) : undefined;
+    if (!terminalVisible || !host) return;
     const observer = new ResizeObserver(() => requestAnimationFrame(syncTerminalDimensions));
-    observer.observe(terminalHost.current); return () => observer.disconnect();
-  }, [terminalVisible]);
-  useEffect(() => { if (terminalVisible) { syncTerminalDimensions(); terminal.current?.focus(); } }, [terminalStage, terminalVisible]);
-  useEffect(() => {
-    if (terminalVisible) void api.createTerminal(workspace?.root).then(({ sessionId: id }) => {
-      sessionId.current = id;
-      for (const input of pendingInput.current.splice(0)) void api.writeTerminal(id, input);
-      requestAnimationFrame(() => { syncTerminalDimensions(); terminal.current?.focus(); });
-    });
-  }, [workspace?.root, terminalVisible]);
+    observer.observe(host); return () => observer.disconnect();
+  }, [activeTerminalId, terminalVisible]);
+  useEffect(() => { if (terminalVisible) requestAnimationFrame(() => { syncTerminalDimensions(); terminals.current.get(activeTerminalId ?? "")?.terminal.focus(); }); }, [activeTerminalId, terminalStage, terminalVisible]);
   useEffect(() => {
     const hideTerminal = (event: KeyboardEvent) => { if (event.key === "Escape") setTerminalStage("hidden"); };
     window.addEventListener("keydown", hideTerminal); return () => window.removeEventListener("keydown", hideTerminal);
@@ -88,8 +132,17 @@ function App() {
   const selected = workspaces[selectedIndex];
   const choose = (item: WorkspaceInspection) => setWorkspace(item);
   const move = (delta: number) => setSelectedIndex(index => (index + delta + workspaces.length) % workspaces.length);
-  const terminalPanel = <section className={terminalStage === "hidden" ? "fixed bottom-5 left-1/2 z-50 -translate-x-1/2" : terminalStage === "partial" ? "fixed inset-x-0 bottom-4 z-50 mx-auto h-72 w-[min(96vw,1480px)] overflow-hidden border border-border bg-[#0c0e11] shadow-2xl" : "fixed inset-x-0 bottom-0 z-50 h-[72vh] border-t border-border bg-[#0c0e11] shadow-2xl"}>
-    {terminalStage === "hidden" ? <button className="grid size-9 place-items-center rounded-full border border-border bg-[#0c0e11] font-mono text-sm text-foreground shadow-lg" aria-label="Open terminal" onClick={() => setTerminalStage("partial")}> &gt;_ </button> : <><button className="absolute inset-x-0 top-0 z-10 grid h-6 place-items-center bg-[#0c0e11] font-mono text-[11px] text-muted-foreground" aria-label={terminalStage === "partial" ? "Expand terminal" : "Hide terminal"} onClick={() => setTerminalStage(stage => stage === "partial" ? "full" : "hidden")}> &gt;_ </button><div className="h-full px-3 pb-3 pt-7" onClick={() => terminal.current?.focus()}><div ref={terminalHost} className="h-full" /></div></>}</section>;
+  const terminalPanel = <>
+    {terminalStage === "hidden" && <button className="fixed bottom-5 left-1/2 z-50 grid size-9 -translate-x-1/2 place-items-center rounded-full border border-border bg-[#0c0e11] font-mono text-sm text-foreground shadow-lg" aria-label="Open terminal" onClick={() => terminalTabs.length ? setTerminalStage("partial") : void addTerminalTab()}> &gt;_ </button>}
+    <section className={terminalStage === "hidden" ? "hidden" : terminalStage === "partial" ? "fixed inset-x-0 bottom-4 z-50 mx-auto h-72 w-[min(96vw,1480px)] overflow-hidden border border-border bg-[#0c0e11] shadow-2xl" : "fixed inset-x-0 bottom-0 z-50 h-[72vh] border-t border-border bg-[#0c0e11] shadow-2xl"}>
+      <div className="flex h-8 items-center gap-1 border-b border-white/10 px-2">
+        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">{terminalTabs.map(tab => <div key={tab.id} className={`flex shrink-0 items-center gap-1 rounded-t px-2 py-1 text-xs ${tab.id === activeTerminalId ? "bg-white/10 text-foreground" : "text-muted-foreground"}`}><button onClick={() => setActiveTerminalId(tab.id)}>{tab.label}</button><button aria-label={`Close ${tab.label} terminal`} onClick={() => closeTerminalTab(tab.id)}><X className="size-3" /></button></div>)}<button className="grid size-6 shrink-0 place-items-center rounded hover:bg-white/10" aria-label="New terminal tab" title="New terminal tab" onClick={() => void addTerminalTab()}><Plus className="size-4" /></button></div>
+        <div className="ml-auto flex shrink-0 items-center gap-1 border-l border-white/10 pl-2" role="toolbar" aria-label="Terminal controls"><button className="grid size-6 place-items-center rounded hover:bg-white/10" aria-label="Hide terminal" title="Hide terminal" onClick={() => setTerminalStage("hidden")}><Minus className="size-4" /></button>{terminalStage === "full" ? <button className="grid size-6 place-items-center rounded hover:bg-white/10" aria-label="Restore terminal size" title="Restore terminal size" onClick={() => setTerminalStage("partial")}><Minimize2 className="size-4" /></button> : <button className="grid size-6 place-items-center rounded hover:bg-white/10" aria-label="Expand terminal" title="Expand terminal" onClick={() => setTerminalStage("full")}><Maximize2 className="size-4" /></button>}</div>
+      </div>
+      {terminalError && <p className="px-3 pt-2 text-xs text-red-300">{terminalError}</p>}
+      <div className="h-[calc(100%-2rem)] px-3 pb-3 pt-2" onClick={() => terminals.current.get(activeTerminalId ?? "")?.terminal.focus()}>{terminalTabs.map(tab => <div key={tab.id} ref={node => { if (node) terminalHosts.current.set(tab.id, node); else terminalHosts.current.delete(tab.id); }} className={tab.id === activeTerminalId ? "h-full" : "hidden"} />)}</div>
+    </section>
+  </>;
 
   if (workspace) {
     const presentation = presentations[workspace.root] ?? {};

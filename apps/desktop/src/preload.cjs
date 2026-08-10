@@ -19,6 +19,13 @@ contextBridge.exposeInMainWorld("aimoto", {
   restoreWorkspaceVersion: (root, versionId) => ipcRenderer.invoke("versions:restore", root, versionId),
   createTerminal: (root) => ipcRenderer.invoke("terminal:create", root),
   writeTerminal: (sessionId, data) => ipcRenderer.invoke("terminal:write", sessionId, data),
-  onTerminalData: (listener) => { terminalListeners.push(listener); },
+  closeTerminal: (sessionId) => ipcRenderer.invoke("terminal:close", sessionId),
+  onTerminalData: (listener) => {
+    terminalListeners.push(listener);
+    return () => {
+      const index = terminalListeners.indexOf(listener);
+      if (index >= 0) terminalListeners.splice(index, 1);
+    };
+  },
   resizeTerminal: (sessionId, cols, rows) => ipcRenderer.invoke("terminal:resize", sessionId, cols, rows)
 });

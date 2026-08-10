@@ -33,7 +33,14 @@ export function exposeDesktopApi(bridge: ElectronBridge): void {
     restoreWorkspaceVersion: (root, versionId) => bridge.ipcRenderer.invoke("versions:restore", root, versionId) as ReturnType<DesktopApi["restoreWorkspaceVersion"]>,
     createTerminal: (root) => bridge.ipcRenderer.invoke("terminal:create", root) as ReturnType<DesktopApi["createTerminal"]>,
     writeTerminal: (sessionId, data) => bridge.ipcRenderer.invoke("terminal:write", sessionId, data) as ReturnType<DesktopApi["writeTerminal"]>,
-    onTerminalData: (listener) => { terminalListeners.push(listener); },
+    closeTerminal: (sessionId) => bridge.ipcRenderer.invoke("terminal:close", sessionId) as ReturnType<DesktopApi["closeTerminal"]>,
+    onTerminalData: (listener) => {
+      terminalListeners.push(listener);
+      return () => {
+        const index = terminalListeners.indexOf(listener);
+        if (index >= 0) terminalListeners.splice(index, 1);
+      };
+    },
     resizeTerminal: (sessionId, cols, rows) => bridge.ipcRenderer.invoke("terminal:resize", sessionId, cols, rows) as ReturnType<DesktopApi["resizeTerminal"]>
   };
   bridge.contextBridge.exposeInMainWorld("aimoto", api);
