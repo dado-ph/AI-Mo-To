@@ -1,10 +1,10 @@
-import { access, cp, readdir, readFile } from "node:fs/promises";
+import { access, cp, readdir, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
-import { digestBundle, verifyStagedModule } from "@ai-mo-to/foundry";
+import { verifyStagedModule } from "@ai-mo-to/foundry";
 
 import {
   SCHEMA_VERSION,
@@ -13,15 +13,20 @@ import {
   type ApprovalRecord,
   type AuthorityMode,
   type ChangeSet,
+  type ModulePin,
   type ProposalRecord,
-  type WorkspaceManifest
+  type WorkspaceManifest,
+  type WorkspaceVersion
 } from "@ai-mo-to/protocol";
 import {
   ProposalCommitError,
   RecordStoreError,
   WorkspaceStore,
+  captureWorkspaceVersion,
   initializeWorkspaceLayout,
+  listWorkspaceVersions as listStoredWorkspaceVersions,
   readWorkspaceManifest,
+  restoreWorkspaceVersion as restoreStoredWorkspaceVersion,
   workspaceDatabasePath,
   workspaceManifestPath,
   writeWorkspaceManifest,
@@ -93,48 +98,50 @@ export interface CreateWorkspaceInput {
 
 export interface WorkspaceInspection {
   root: string;
+  schemaVersion: WorkspaceManifest["schemaVersion"];
   workspaceId: string;
   name: string;
   revision: number;
   createdAt: string;
-  modules: WorkspaceManifest["modules"];
-  authorityMode: WorkspaceManifest["authorityMode"];
-  capabilities: WorkspaceManifest["capabilities"];
-  layout: WorkspaceManifest["layout"];
+  currentVersionId: string | null;
   health: "ok";
-  evidence: {
-    revisions: readonly {
-      revision: number;
-      createdAt: string;
-      reason: string;
-    }[];
-    proposals: readonly {
-      proposalId: string;
-      baseRevision: number;
-      changeSetDigest: string;
-      status: string;
-      createdAt: string;
-      appliedRevision?: number;
-    }[];
-    approvals: readonly {
-      approvalId: string;
-      proposalId: string;
-      changeSetDigest: string;
-      principalId: string;
-      approvedAt: string;
-    }[];
-    recordHealth: {
-      status: "ok";
-      totalRecords: number;
-      totalEvents: number;
-      collections: readonly {
-        moduleId: string;
-        collectionId: string;
-        recordCount: number;
-      }[];
-    };
+}
+
+export interface WorkspaceMaturityFlags {
+  prototype?: boolean;
+  production?: boolean;
+}
+
+export interface PrepareImplementationRequestInput {
+  root: string;
+  request: string;
+  maturity?: WorkspaceMaturityFlags;
+}
+
+export interface ImplementationBrief {
+  workspaceRoot: string;
+  workspaceId: string;
+  request: string;
+  instructions: string;
+}
+
+export interface CreateWorkspaceVersionInput {
+  root: string;
+  message: string;
+}
+
+interface LegacyWorkspaceFields {
+  modules: ModulePin[];
+  authorityMode: AuthorityMode;
+  capabilities: Array<{ capability: string }>;
+  layout: {
+    homeView: string;
+    views: Array<{ id: string; moduleId: string; viewId: string }>;
   };
 }
+
+type LegacyWorkspaceManifest = WorkspaceManifest & LegacyWorkspaceFields;
+type LegacyWorkspaceInspection = WorkspaceInspection & LegacyWorkspaceFields;
 
 export interface CreateProposalInput {
   root: string;
@@ -246,39 +253,13 @@ function mapRecordError(error: unknown): never {
   throw error;
 }
 
-async function bundleFiles(directory: string, relative = ""): Promise<Array<{ path: string; content: Uint8Array }>> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files: Array<{ path: string; content: Uint8Array }> = [];
-  for (const entry of entries) {
-    const path = join(directory, entry.name);
-    const name = relative ? `${relative}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) files.push(...await bundleFiles(path, name));
-    else if (entry.isFile()) files.push({ path: name, content: await readFile(path) });
-  }
-  return files;
-}
-
 function builtInModulesRoot(): string {
   // The installed desktop app supplies this directory from its packaged
   // resources; source and CLI builds retain the repository-relative default.
   return process.env.AIMOTO_BUILTIN_MODULES_DIR ?? join(fileURLToPath(new URL("../../../", import.meta.url)), "modules");
 }
 
-async function builtInModulePins(): Promise<WorkspaceManifest["modules"]> {
-  const modulesRoot = builtInModulesRoot();
-  return Promise.all(["files", "tasks"].map(async (name) => {
-    const directory = join(modulesRoot, name);
-    const manifest = JSON.parse(await readFile(join(directory, "module.json"), "utf8")) as { moduleId: string; version: string };
-    return {
-      moduleId: manifest.moduleId,
-      version: manifest.version,
-      digest: digestBundle(await bundleFiles(directory)),
-      source: { kind: "builtin" as const, reference: `builtin:${name}` }
-    };
-  }));
-}
-
-function moduleBundleDirectory(root: string, module: WorkspaceManifest["modules"][number]): string {
+function moduleBundleDirectory(root: string, module: ModulePin): string {
   if (module.source.kind === "builtin") {
     const name = module.source.reference.replace(/^builtin:/, "");
     return join(builtInModulesRoot(), name);
@@ -314,12 +295,58 @@ function slugify(value: string): string {
   return `workspace-${slug || "local"}`.slice(0, 64);
 }
 
+function legacyWorkspaceFields(): LegacyWorkspaceFields {
+  return {
+    modules: [],
+    authorityMode: "suggest",
+    capabilities: [],
+    layout: { homeView: "", views: [] }
+  };
+}
+
+function asLegacyManifest(manifest: WorkspaceManifest): LegacyWorkspaceManifest {
+  return { ...manifest, ...legacyWorkspaceFields() };
+}
+
+/**
+ * Selects implementation guidance only from explicit workspace context.
+ * The user's request is deliberately not an input, so request keywords cannot
+ * silently select a category, module, or implementation path.
+ */
+export function selectImplementationRules(input: {
+  workspaceRoot: string;
+  notes: readonly string[];
+  maturity?: WorkspaceMaturityFlags;
+}): string {
+  if (input.maturity?.prototype && input.maturity.production) {
+    throw new EngineError("InvalidInput", "A workspace cannot be both prototype and production maturity.");
+  }
+
+  const rules = [
+    `Work directly beneath the canonical workspace root: ${input.workspaceRoot}.`,
+    "Do not write application files inside .aimoto/versions; that directory is reserved for explicit user-approved captures.",
+    "Implement and verify the requested user interface and behavior before asking whether to create a version."
+  ];
+  const notes = input.notes.map((note) => note.trim()).filter(Boolean);
+  if (notes.length > 0) rules.push(`Workspace notes:\n${notes.map((note) => `- ${note}`).join("\n")}`);
+  if (input.maturity?.prototype) {
+    rules.push("This workspace is explicitly marked as a prototype: favor a small working slice while keeping files understandable.");
+  }
+  if (input.maturity?.production) {
+    rules.push("This workspace is explicitly marked as production: preserve existing behavior and include proportionate validation and recovery checks.");
+  }
+  rules.push(
+    `AI-Mo-To has not built this workspace. You must now implement the workspace in ${input.workspaceRoot}. Continue until the requested UI and functions work.`
+  );
+  return rules.join("\n\n");
+}
+
 function assertManifest(manifest: unknown): asserts manifest is WorkspaceManifest {
   const result = validateProtocol("workspace-manifest", manifest);
   if (!result.valid) {
     throw new EngineError(
       "ValidationFailed",
-      "The workspace manifest does not satisfy the v1 contract.",
+      "The workspace manifest does not satisfy the v2 contract.",
       { errors: result.errors }
     );
   }
@@ -353,11 +380,11 @@ function assertApproval(approval: unknown): asserts approval is ApprovalRecord {
 }
 
 function applyOperations(
-  current: WorkspaceManifest,
+  current: LegacyWorkspaceManifest,
   changeSet: ChangeSet,
-  restoredManifests = new Map<string, WorkspaceManifest>(),
-): WorkspaceManifest {
-  let next: WorkspaceManifest = structuredClone(current);
+  restoredManifests = new Map<string, LegacyWorkspaceManifest>(),
+): LegacyWorkspaceManifest {
+  let next: LegacyWorkspaceManifest = structuredClone(current);
   for (const operation of changeSet.operations) {
     if (operation.kind === "workspace.set-authority-mode") {
       const authorityMode = operation.input.authorityMode;
@@ -375,7 +402,7 @@ function applyOperations(
       if (!candidate || typeof candidate !== "object") {
         throw new EngineError("ValidationFailed", "The module install operation requires a module pin.");
       }
-      const module = candidate as WorkspaceManifest["modules"][number];
+      const module = candidate as ModulePin;
       if (!module.moduleId || !module.version || !module.digest || !module.source) {
         throw new EngineError("ValidationFailed", "The module install operation contains an incomplete module pin.");
       }
@@ -426,8 +453,8 @@ function applyOperations(
   return next;
 }
 
-async function verifiedRestoreManifests(root: string, changeSet: ChangeSet): Promise<Map<string, WorkspaceManifest>> {
-  const resolved = new Map<string, WorkspaceManifest>();
+async function verifiedRestoreManifests(root: string, changeSet: ChangeSet): Promise<Map<string, LegacyWorkspaceManifest>> {
+  const resolved = new Map<string, LegacyWorkspaceManifest>();
   for (const operation of changeSet.operations) {
     if (operation.kind !== "workspace.restore-snapshot") continue;
     const snapshotId = operation.input.snapshotId;
@@ -440,13 +467,13 @@ async function verifiedRestoreManifests(root: string, changeSet: ChangeSet): Pro
       throw new EngineError("ValidationFailed", "The snapshot no longer contains the manifest bound to this restore proposal.");
     }
     assertManifest(restored.manifest);
-    resolved.set(operation.operationId, restored.manifest);
+    resolved.set(operation.operationId, asLegacyManifest(restored.manifest));
   }
   return resolved;
 }
 
 interface VerifiedRestoreState {
-  manifest: WorkspaceManifest;
+  manifest: LegacyWorkspaceManifest;
   records: WorkspaceRecordSnapshot;
 }
 
@@ -495,7 +522,7 @@ async function prepareModuleBundles(root: string, changeSet: ChangeSet): Promise
     if (!candidate || typeof candidate !== "object") {
       throw new EngineError("ValidationFailed", "The module install operation requires a module pin.");
     }
-    const module = candidate as WorkspaceManifest["modules"][number];
+    const module = candidate as ModulePin;
     if (module.source?.kind !== "local" || typeof module.source.reference !== "string") {
       throw new EngineError("ValidationFailed", "Generated module installation requires a local staged source.");
     }
@@ -522,9 +549,13 @@ async function prepareModuleBundles(root: string, changeSet: ChangeSet): Promise
 export class WorkspaceEngine {
   readonly #contexts = new Map<string, ContextGrant>();
 
+  async #inspectLegacyWorkspace(root: string): Promise<LegacyWorkspaceInspection> {
+    return { ...await this.inspectWorkspace(root), ...legacyWorkspaceFields() };
+  }
+
   /** Creates an opaque, in-memory invocation grant. It is never persisted or exposed to a module except by reference. */
   async mintContext(input: MintContextInput): Promise<string> {
-    const workspace = await this.inspectWorkspace(input.root);
+    const workspace = await this.#inspectLegacyWorkspace(input.root);
     if (!workspace.modules.some((pin) => pin.moduleId === input.moduleId)) {
       throw new EngineError("ModuleNotInstalled", `Module ${input.moduleId} is not installed in this workspace.`);
     }
@@ -545,7 +576,7 @@ export class WorkspaceEngine {
 
   /** Brokers a dynamic handler call after checking the engine-owned context grant. */
   async invokeModule(input: InvokeModuleInput): Promise<ModuleJsonValue> {
-    const workspace = await this.inspectWorkspace(input.root);
+    const workspace = await this.#inspectLegacyWorkspace(input.root);
     const grant = this.#contexts.get(input.contextRef);
     if (!grant) throw new EngineError("ContextNotFound", "The invocation context does not exist.");
     if (grant.workspaceId !== workspace.workspaceId || grant.moduleId !== input.moduleId || grant.revision !== workspace.revision) {
@@ -583,7 +614,7 @@ export class WorkspaceEngine {
    */
   async executeBuiltInCommand(input: ExecuteBuiltInCommandInput): Promise<BuiltInRecord | { removed: true; recordId: string }> {
     const root = resolve(input.root);
-    const workspace = await this.inspectWorkspace(root);
+    const workspace = await this.#inspectLegacyWorkspace(root);
     AuthorityStateGuard.assertCanMutateState(workspace.authorityMode, "executeBuiltInCommand");
     if (!workspace.modules.some((module) => module.moduleId === input.moduleId)) {
       throw new EngineError("ModuleNotInstalled", `Module ${input.moduleId} is not installed in this workspace.`);
@@ -666,7 +697,7 @@ export class WorkspaceEngine {
 
   async getBuiltInRecord(rootInput: string, moduleId: "aimoto.files" | "aimoto.tasks", recordId: string): Promise<BuiltInRecord> {
     const root = resolve(rootInput);
-    const workspace = await this.inspectWorkspace(root);
+    const workspace = await this.#inspectLegacyWorkspace(root);
     if (!workspace.modules.some((module) => module.moduleId === moduleId)) {
       throw new EngineError("ModuleNotInstalled", `Module ${moduleId} is not installed in this workspace.`);
     }
@@ -684,7 +715,7 @@ export class WorkspaceEngine {
 
   async listBuiltInRecords(rootInput: string, moduleId: "aimoto.files" | "aimoto.tasks"): Promise<readonly BuiltInRecord[]> {
     const root = resolve(rootInput);
-    const workspace = await this.inspectWorkspace(root);
+    const workspace = await this.#inspectLegacyWorkspace(root);
     if (!workspace.modules.some((module) => module.moduleId === moduleId)) {
       throw new EngineError("ModuleNotInstalled", `Module ${moduleId} is not installed in this workspace.`);
     }
@@ -701,7 +732,7 @@ export class WorkspaceEngine {
   /** Reads inert, validated view declarations from an installed module bundle. Generated code is never loaded. */
   async listInstalledModuleViews(rootInput: string, moduleId: string): Promise<readonly InstalledModuleView[]> {
     const root = resolve(rootInput);
-    const workspace = await this.inspectWorkspace(root);
+    const workspace = await this.#inspectLegacyWorkspace(root);
     const pin = workspace.modules.find((module) => module.moduleId === moduleId);
     if (!pin) throw new EngineError("ModuleNotInstalled", `Module ${moduleId} is not installed in this workspace.`);
     const directory = moduleBundleDirectory(root, pin);
@@ -764,7 +795,7 @@ export class WorkspaceEngine {
 
   async listInstalledModuleRecords(rootInput: string, moduleId: string, collectionId: string): Promise<readonly BuiltInRecord[]> {
     const root = resolve(rootInput);
-    const workspace = await this.inspectWorkspace(root);
+    const workspace = await this.#inspectLegacyWorkspace(root);
     if (!workspace.modules.some((module) => module.moduleId === moduleId)) {
       throw new EngineError("ModuleNotInstalled", `Module ${moduleId} is not installed in this workspace.`);
     }
@@ -784,7 +815,7 @@ export class WorkspaceEngine {
     now?: () => Date;
   }): Promise<BuiltInRecord> {
     const root = resolve(input.root);
-    const workspace = await this.inspectWorkspace(root);
+    const workspace = await this.#inspectLegacyWorkspace(root);
     AuthorityStateGuard.assertCanMutateState(workspace.authorityMode, "executeModuleRecordCommand");
     const now = (input.now ?? (() => new Date()))().toISOString();
     const store = new WorkspaceStore(workspaceDatabasePath(root));
@@ -804,7 +835,7 @@ export class WorkspaceEngine {
 
   async createSnapshot(rootInput: string): Promise<CreatedSnapshot> {
     const root = resolve(rootInput);
-    const inspection = await this.inspectWorkspace(root);
+    const inspection = await this.#inspectLegacyWorkspace(root);
     const store = new WorkspaceStore(workspaceDatabasePath(root));
     try {
       store.initialize();
@@ -907,31 +938,21 @@ export class WorkspaceEngine {
     }
 
     const manifest: WorkspaceManifest = {
-      schemaVersion: SCHEMA_VERSION,
+      schemaVersion: 2,
       workspaceId: slugify(input.workspaceId ?? name),
       name,
       createdAt: (input.now ?? (() => new Date()))().toISOString(),
       revision: 0,
-      modules: await builtInModulePins(),
-      layout: {
-        homeView: "tasks.list",
-        views: [
-          { id: "files.browser", moduleId: "aimoto.files", viewId: "browser" },
-          { id: "files.detail", moduleId: "aimoto.files", viewId: "detail" },
-          { id: "tasks.list", moduleId: "aimoto.tasks", viewId: "task-list" },
-          { id: "tasks.form", moduleId: "aimoto.tasks", viewId: "task-form" }
-        ]
-      },
-      capabilities: [],
-      eventRoutes: [],
-      aiAdapter: "none",
-      authorityMode: "suggest",
-      contextPolicy: "bounded-v1",
-      snapshotPolicy: "on-structural-change"
+      currentVersionId: null
     };
     assertManifest(manifest);
 
     await initializeWorkspaceLayout(root);
+    try {
+      await writeFile(join(root, ".aimoto", "notes.json"), "[]\n", { encoding: "utf8", flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
     const store = new WorkspaceStore(workspaceDatabasePath(root));
     try {
       store.initialize();
@@ -968,66 +989,83 @@ export class WorkspaceEngine {
         );
       }
 
-      if (
-        stored.workspaceId !== fileManifest.workspaceId ||
-        stored.revision !== fileManifest.revision
-      ) {
+      if (stored.workspaceId !== fileManifest.workspaceId) {
         throw new EngineError(
           "ValidationFailed",
           "The workspace manifest and database disagree.",
           {
             manifestWorkspaceId: fileManifest.workspaceId,
-            databaseWorkspaceId: stored.workspaceId,
-            manifestRevision: fileManifest.revision,
-            databaseRevision: stored.revision
+            databaseWorkspaceId: stored.workspaceId
           }
         );
       }
 
       return {
         root,
+        schemaVersion: fileManifest.schemaVersion,
         workspaceId: fileManifest.workspaceId,
         name: fileManifest.name,
         revision: fileManifest.revision,
         createdAt: fileManifest.createdAt,
-        modules: fileManifest.modules,
-        authorityMode: fileManifest.authorityMode,
-        capabilities: fileManifest.capabilities,
-        layout: fileManifest.layout,
-        health: "ok",
-        evidence: {
-          revisions: store.listRevisions().map(({ revision, createdAt, reason }) => ({
-            revision, createdAt, reason
-          })),
-          proposals: store.listProposals().map((proposal) => ({
-            proposalId: proposal.proposalId,
-            baseRevision: proposal.baseRevision,
-            changeSetDigest: proposal.changeSetHash,
-            status: proposal.status,
-            createdAt: proposal.createdAt,
-            ...(proposal.status === "committed"
-              ? { appliedRevision: proposal.baseRevision + 1 }
-              : {})
-          })),
-          approvals: store.listApprovals().map((approval) => ({
-            approvalId: approval.approvalId,
-            proposalId: approval.proposalId,
-            changeSetDigest: approval.changeSetHash,
-            principalId: approval.principalId,
-            approvedAt: approval.approvedAt
-          })),
-          recordHealth: store.inspectRecordHealth()
-        }
+        currentVersionId: fileManifest.currentVersionId,
+        health: "ok"
       };
     } finally {
       store.close();
     }
   }
 
+  async prepareImplementationRequest(input: PrepareImplementationRequestInput): Promise<ImplementationBrief> {
+    const request = input.request.trim();
+    if (!request) throw new EngineError("InvalidInput", "An implementation request is required.");
+    const workspace = await this.inspectWorkspace(input.root);
+    let notes: unknown;
+    try {
+      notes = JSON.parse(await readFile(join(workspace.root, ".aimoto", "notes.json"), "utf8"));
+    } catch (error) {
+      throw new EngineError("ValidationFailed", "The workspace notes could not be read.", {
+        cause: error instanceof Error ? error.message : String(error)
+      });
+    }
+    if (!Array.isArray(notes) || notes.some((note) => typeof note !== "string")) {
+      throw new EngineError("ValidationFailed", "Workspace notes must be a JSON array of strings.");
+    }
+
+    const rules = selectImplementationRules({
+      workspaceRoot: workspace.root,
+      notes,
+      ...(input.maturity ? { maturity: input.maturity } : {})
+    });
+    return {
+      workspaceRoot: workspace.root,
+      workspaceId: workspace.workspaceId,
+      request,
+      instructions: `Requested outcome:\n${request}\n\n${rules}`
+    };
+  }
+
+  async createWorkspaceVersion(input: CreateWorkspaceVersionInput): Promise<WorkspaceVersion> {
+    const root = resolve(input.root);
+    await this.inspectWorkspace(root);
+    return captureWorkspaceVersion(root, { message: input.message });
+  }
+
+  async listWorkspaceVersions(rootInput: string): Promise<readonly WorkspaceVersion[]> {
+    const root = resolve(rootInput);
+    await this.inspectWorkspace(root);
+    return listStoredWorkspaceVersions(root);
+  }
+
+  async restoreWorkspaceVersion(rootInput: string, versionId: string): Promise<WorkspaceVersion> {
+    const root = resolve(rootInput);
+    await this.inspectWorkspace(root);
+    return restoreStoredWorkspaceVersion(root, versionId);
+  }
+
   async createProposal(input: CreateProposalInput): Promise<ProposalRecord> {
     const root = resolve(input.root);
     assertChangeSet(input.changeSet);
-    const inspection = await this.inspectWorkspace(root);
+    const inspection = await this.#inspectLegacyWorkspace(root);
     if (input.changeSet.workspaceId !== inspection.workspaceId) {
       throw new EngineError("InvalidInput", "The ChangeSet targets a different workspace.");
     }
@@ -1069,7 +1107,7 @@ export class WorkspaceEngine {
 
   async approveProposal(input: ApproveProposalInput): Promise<WorkspaceInspection> {
     const root = resolve(input.root);
-    const inspection = await this.inspectWorkspace(root);
+    const inspection = await this.#inspectLegacyWorkspace(root);
     AuthorityStateGuard.assertCanApplyProposal(inspection.authorityMode);
     assertApproval(input.approval);
 
@@ -1103,7 +1141,11 @@ export class WorkspaceEngine {
           approvalId: input.approval.approvalId,
           principalId: input.approval.approvedBy ?? "local-user",
           approvedAt: input.approval.approvedAt,
-          transformManifest: (current, stagedChangeSet) => applyOperations(current, stagedChangeSet as ChangeSet, restoreManifests),
+          transformManifest: (current, stagedChangeSet) => applyOperations(
+            asLegacyManifest(current),
+            stagedChangeSet as ChangeSet,
+            restoreManifests
+          ),
           transformRecords: (_current, stagedChangeSet) => {
             for (const operation of (stagedChangeSet as ChangeSet).operations) {
               const restored = restoreStates.get(operation.operationId);
