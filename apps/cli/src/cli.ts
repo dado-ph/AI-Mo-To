@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { EngineError, WorkspaceEngine, type ImplementationBrief, type WorkspaceInspection } from "@ai-mo-to/engine";
@@ -191,19 +191,37 @@ export async function resolveWorkspacePath(
   cwd: string,
   requestedWorkspace?: string,
   environment: NodeJS.ProcessEnv = process.env,
-  fallbackToDefault = false
+  fallbackToDefault = false,
+  requireCanonicalWorkspace = false
 ): Promise<string> {
-  if (requestedWorkspace) {
-    return (await resolveRegisteredWorkspace(requestedWorkspace, environment)) ?? resolve(cwd, requestedWorkspace);
+  const localAppData = environment.LOCALAPPDATA;
+  if (requireCanonicalWorkspace && !localAppData) {
+    throw new EngineError(
+      "InvalidInput",
+      "AI-Mo-To requires LOCALAPPDATA to resolve the canonical workspace store. Do not use the terminal or home directory as a workspace."
+    );
   }
-  if (environment.AIMOTO_WORKSPACE) return resolve(cwd, environment.AIMOTO_WORKSPACE);
+  const canonicalStore = localAppData ? resolve(localAppData, "AI-Mo-To", "workspaces") : undefined;
+  const defaultWorkspace = canonicalStore ? join(canonicalStore, "default") : undefined;
+  if (requestedWorkspace) {
+    const root = (await resolveRegisteredWorkspace(requestedWorkspace, environment)) ?? resolve(cwd, requestedWorkspace);
+    const pathFromStore = canonicalStore ? relative(canonicalStore, root) : undefined;
+    if (requireCanonicalWorkspace && (!pathFromStore || pathFromStore === ".." || pathFromStore.startsWith(`..${sep}`) || isAbsolute(pathFromStore))) {
+      throw new EngineError(
+        "InvalidInput",
+        `Workspace path \"${root}\" is outside AI-Mo-To's canonical workspace store. Remove --workspace and run the request again; AI-Mo-To will use \"${defaultWorkspace}\". Agents must not use the terminal directory, home directory, or a source checkout as a workspace.`
+      );
+    }
+    return root;
+  }
+  if (environment.AIMOTO_WORKSPACE) return resolveWorkspacePath(cwd, environment.AIMOTO_WORKSPACE, environment, fallbackToDefault, requireCanonicalWorkspace);
   const found = await findWorkspaceDirectory(cwd);
-  if (found) return found;
+  if (found) return resolveWorkspacePath(cwd, found, environment, fallbackToDefault, requireCanonicalWorkspace);
   const registered = await resolveRegisteredWorkspace("default", environment);
-  if (registered) return registered;
+  if (registered) return resolveWorkspacePath(cwd, registered, environment, fallbackToDefault, requireCanonicalWorkspace);
   if (fallbackToDefault) {
-    return environment.LOCALAPPDATA
-      ? resolve(environment.LOCALAPPDATA, "AI-Mo-To", "workspaces", "default")
+    return defaultWorkspace
+      ? defaultWorkspace
       : resolve(homedir(), ".aimoto", "workspaces", "default");
   }
   return resolve(cwd);
@@ -321,7 +339,7 @@ export async function runCli(args: string[], io: CliIo, dependencies: CliDepende
       if (!request || request.startsWith("--")) {
         throw new EngineError("InvalidInput", 'request requires a need, for example: aimoto request "Build a garden planner" --workspace <path>');
       }
-      const root = await resolveWorkspacePath(cwd, option(args, "--workspace"), environment, true);
+      const root = await resolveWorkspacePath(cwd, option(args, "--workspace"), environment, true, true);
       await ensureWorkspaceResolved(engine, root);
       result = { implementationBrief: await engine.prepareImplementationRequest({ root, request }) };
     } else if (args[0] === "version") {

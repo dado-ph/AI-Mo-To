@@ -71,10 +71,14 @@ describe("aimoto CLI", () => {
 
   it("returns a direct implementation brief without creating a proposal", async () => {
     const cwd = await temporaryDirectory();
-    const workspaceRoot = resolve(cwd, "garden");
+    const localAppData = join(cwd, "local-app-data");
+    const workspaceRoot = join(localAppData, "AI-Mo-To", "workspaces", "garden");
     const output = capture();
 
-    expect(await runCli(["request", "Build a garden planner", "--workspace", "garden", "--json"], output.io, { cwd })).toBe(0);
+    expect(await runCli(["request", "Build a garden planner", "--workspace", workspaceRoot, "--json"], output.io, {
+      cwd,
+      environment: { LOCALAPPDATA: localAppData }
+    })).toBe(0);
     expect(json(output)).toMatchObject({
       ok: true,
       command: "request",
@@ -92,6 +96,26 @@ describe("aimoto CLI", () => {
     expect(json(output).data).not.toHaveProperty("stagedModule");
   });
 
+  it("rejects a request path outside the canonical AppData workspace store and gives the agent the correction", async () => {
+    const cwd = await temporaryDirectory();
+    const localAppData = join(cwd, "local-app-data");
+    const homeWorkspace = join(cwd, "ui-callback-laboratory");
+    const output = capture();
+
+    expect(await runCli(["request", "Build a callback laboratory", "--workspace", homeWorkspace, "--json"], output.io, {
+      cwd,
+      environment: { LOCALAPPDATA: localAppData }
+    })).toBe(2);
+    expect(json(output)).toMatchObject({
+      ok: false,
+      command: "request",
+      error: {
+        code: "InvalidInput",
+        message: expect.stringContaining(`Remove --workspace and run the request again; AI-Mo-To will use \"${join(localAppData, "AI-Mo-To", "workspaces", "default")}\"`)
+      }
+    });
+  });
+
   it("rejects the removed request --agent path", async () => {
     const cwd = await temporaryDirectory();
     const output = capture();
@@ -106,10 +130,18 @@ describe("aimoto CLI", () => {
 
   it("creates no version until version create is explicitly run", async () => {
     const cwd = await temporaryDirectory();
-    await runCli(["request", "Build a garden planner", "--workspace", "garden", "--json"], capture().io, { cwd });
+    const localAppData = join(cwd, "local-app-data");
+    const workspaceRoot = join(localAppData, "AI-Mo-To", "workspaces", "garden");
+    await runCli(["request", "Build a garden planner", "--workspace", workspaceRoot, "--json"], capture().io, {
+      cwd,
+      environment: { LOCALAPPDATA: localAppData }
+    });
     const listed = capture();
 
-    expect(await runCli(["version", "list", "--workspace", "garden", "--json"], listed.io, { cwd })).toBe(0);
+    expect(await runCli(["version", "list", "--workspace", workspaceRoot, "--json"], listed.io, {
+      cwd,
+      environment: { LOCALAPPDATA: localAppData }
+    })).toBe(0);
     expect(json(listed)).toMatchObject({ ok: true, command: "version.list", data: { versions: [] } });
   });
 

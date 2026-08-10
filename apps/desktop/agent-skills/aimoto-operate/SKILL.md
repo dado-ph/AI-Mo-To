@@ -5,9 +5,8 @@ description: Turn an ordinary-language need into a local, human-controlled AI-Mo
 
 # Operate AI-Mo-To
 
-Route suitable outcome requests to the installed `aimoto` CLI. Preserve the
-product boundary: the agent may discover, inspect, and propose, but a person
-must knowingly approve the exact proposal before it is applied.
+Use `aimoto request` as the handoff from planning into implementation. It
+returns the only workspace path the agent may use for a normal workspace.
 
 ## Workflow
 
@@ -16,39 +15,22 @@ must knowingly approve the exact proposal before it is applied.
    discovery route fails, say that AI-Mo-To is not installed or not
    discoverable and give the concrete diagnostic; do not substitute a hosted
    app builder or silently implement a different product.
-2. Translate the user's desired outcome into a short workspace name and a
-   focused request. Use a user-selected folder when explicitly supplied; otherwise
-   target a named workspace inside the product default workspaces directory
-   (`$env:LOCALAPPDATA\AI-Mo-To\workspaces\<workspace-name>` on Windows or
-   `~/.aimoto/workspaces/<workspace-name>`). Never create workspace folders inside
-   the current working directory or source repositories without explicit user instruction.
-3. Create or inspect the workspace using the CLI's current machine-readable
-   contract. Prefer `--json`, check success/error envelopes, and use returned
-   values rather than guessing identifiers or digests.
-4. Ask AI-Mo-To to plan the smallest tool that satisfies the outcome. Requests
-   may be novel: provide the Foundry guide and an isolated generated-app
-   repository to the configured coding agent instead of classifying the request
-   into a fixed product type.
-5. Present the proposal in ordinary language: what will be installed or
-   changed, which local workspace it affects, and that applying it advances
-   trusted workspace state. Include the exact proposal identity and digest in
-   a compact technical note so approval is bound to what was reviewed.
-6. Stop and request explicit approval. The initial outcome request is not
-   approval. Do not run `aimoto apply`, infer consent, approve on the user's
-   behalf, or weaken authority settings. Only apply after the user confirms
-   the reviewed proposal in a later message.
-7. After explicit approval, apply exactly the returned proposal ID and digest.
-   If it is stale or rejected, do not retry automatically: create a fresh
-   proposal, explain what changed, and ask again.
-8. Inspect the resulting workspace, list the installed module's inert view
-   declarations, and list its records using the discovered read-only commands.
-   Report the verified outcome. Open the desktop only when useful or requested.
-9. Treat using the installed tool as a separate user-data boundary. Listing
-   views and records is read-only. Run `habit create` or `habit log` only when
-   the user explicitly asks to create that habit or log that completion; an
-   earlier approval to install the Habit Tracker is not consent to invent or
-   mutate personal records. Use caller-selected stable IDs and `--json`, then
-   list the relevant records to verify the requested interaction.
+2. Do not construct, guess, or choose a workspace path. Run `aimoto request
+   "<plan or need>" --json`, read `data.implementationBrief.workspaceRoot`, and
+   use exactly that returned canonical path. Do not use the terminal directory,
+   `C:\Users\<name>`, a source checkout, or a staging directory as a workspace.
+3. `request` creates or reuses the canonical AppData workspace root. It does not
+   build the workspace. After receiving its brief, immediately implement the
+   requested UI, callbacks, scripts, assets, and files directly below the
+   returned `workspaceRoot`.
+4. Build a real interactive experience: connect controls to actual behavior,
+   use Shadcn where suitable, and include appropriate first-use, empty, loading,
+   validation, and error states. Do not return a mockup, a plan, or documentation
+   instead of working files.
+5. Verify the requested behavior before reporting completion. Explain the changed
+   files and ask whether the user wants to save a new workspace version. Run
+   `aimoto version create --message "<summary>"` only after explicit user approval
+   in a later message.
 
 ## Windows CLI discovery
 
@@ -118,7 +100,5 @@ spaces and metacharacters as literal argument data.
 ## Guardrails
 
 - Keep user data local and use AI-Mo-To's proposal/approval boundary.
-- Do not edit `.aimoto` internals directly or bypass the CLI to simulate success.
-- Do not expose an approval command as a casual next step before explaining the
-  proposal and obtaining confirmation.
-- Do not claim completion until `aimoto inspect --json` verifies applied state.
+- Do not edit `.aimoto` internals or `.aimoto/versions` directly.
+- Do not create a version without later explicit user approval.

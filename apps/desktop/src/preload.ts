@@ -23,6 +23,7 @@ export function exposeDesktopApi(bridge: ElectronBridge): void {
     selectWorkspace: () => bridge.ipcRenderer.invoke("workspace:select") as ReturnType<DesktopApi["selectWorkspace"]>,
     inspectWorkspace: (root) => bridge.ipcRenderer.invoke("workspace:inspect", root) as ReturnType<DesktopApi["inspectWorkspace"]>,
     listAllWorkspaces: () => bridge.ipcRenderer.invoke("workspace:listAll") as ReturnType<DesktopApi["listAllWorkspaces"]>,
+    getWorkspacePresentation: (root) => bridge.ipcRenderer.invoke("workspace:presentation", root) as ReturnType<DesktopApi["getWorkspacePresentation"]>,
     openWorkspaceFolder: (root) => bridge.ipcRenderer.invoke("workspace:openFolder", root) as ReturnType<DesktopApi["openWorkspaceFolder"]>,
     createWorkspace: (name, rootPath) => bridge.ipcRenderer.invoke("workspace:create", name, rootPath) as ReturnType<DesktopApi["createWorkspace"]>,
     renameWorkspace: (root, newName) => bridge.ipcRenderer.invoke("workspace:rename", root, newName) as ReturnType<DesktopApi["renameWorkspace"]>,

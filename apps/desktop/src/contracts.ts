@@ -11,12 +11,18 @@ export interface DesktopWorkspaceVersion {
   fileManifestDigest: string;
 }
 
+export interface WorkspacePresentation {
+  thumbnailUrl?: string;
+  entryUrl?: string;
+}
+
 export interface DesktopApi {
   /** Opens the local workspace that AI-Mo-To prepares during first launch. */
   openDefaultWorkspace(): Promise<WorkspaceInspection>;
   selectWorkspace(): Promise<WorkspaceInspection | undefined>;
   inspectWorkspace(root: string): Promise<WorkspaceInspection>;
   listAllWorkspaces(): Promise<WorkspaceInspection[]>;
+  getWorkspacePresentation(root: string): Promise<WorkspacePresentation>;
   openWorkspaceFolder(root: string): Promise<void>;
   createWorkspace(name: string, rootPath?: string): Promise<WorkspaceInspection>;
   renameWorkspace(root: string, newName: string): Promise<WorkspaceInspection>;
