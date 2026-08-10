@@ -23,14 +23,23 @@ returns the only workspace path the agent may use for a normal workspace.
    build the workspace. After receiving its brief, immediately implement the
    requested UI, callbacks, scripts, assets, and files directly below the
    returned `workspaceRoot`.
-4. Build a real interactive experience: connect controls to actual behavior,
-   use Shadcn where suitable, and include appropriate first-use, empty, loading,
-   validation, and error states. Do not return a mockup, a plan, or documentation
-   instead of working files.
-5. Verify the requested behavior before reporting completion. Explain the changed
-   files and ask whether the user wants to save a new workspace version. Run
-   `aimoto version create --message "<summary>"` only after explicit user approval
-   in a later message.
+4. Build a real interactive experience: connect controls to actual behavior.
+   For every interactive UI, Shadcn is required: configure `components.json`, use
+   generated Shadcn primitives, and use `cn()` from `src/lib/utils.ts` for
+   conditional styling. Include appropriate first-use, empty, loading, validation,
+   success, cancellation, and error states. Keep copy decision-focused: do not
+   repeat control labels or status information in explanatory paragraphs. Do not
+   return a mockup, a plan, or documentation instead of working files.
+5. Meet WCAG 2.2 interaction basics: every control is keyboard-operable with
+   visible focus; hover-only information also works on keyboard focus; pointer
+   actions can be cancelled; drag interactions have click/tap alternatives; and
+   pointer targets are at least 24 CSS pixels unless WCAG provides an exception.
+   Run `aimoto verify --workspace <workspaceRoot>` after implementation. Treat
+   every reported issue as a required correction and rerun verification until it
+   passes before reporting completion or asking whether to create a version.
+6. Explain the changed files and ask whether the user wants to save a new
+   workspace version. Run `aimoto version create --message "<summary>"` only
+   after explicit user approval in a later message.
 
 ## Windows CLI discovery
 

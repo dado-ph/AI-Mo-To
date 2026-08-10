@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { WorkspaceEngine } from "../src/index.js";
+import { verifyWorkspaceUi, WorkspaceEngine } from "../src/index.js";
 
 const roots: string[] = [];
 
@@ -91,5 +91,23 @@ describe("workspace implementation handoff", () => {
       revision: 2,
       currentVersionId: restored.versionId
     });
+  });
+
+  it("returns correction-ready diagnostics until an interactive workspace uses Shadcn safely", async () => {
+    const root = await temporaryWorkspace();
+    await new WorkspaceEngine().createWorkspace({ root, name: "Garden" });
+    const broken = await verifyWorkspaceUi(root);
+    expect(broken.ok).toBe(false);
+    expect(broken.issues.map((issue) => issue.code)).toContain("UI_SHADCN_CONFIG_MISSING");
+    expect(broken.issues.map((issue) => issue.code)).toContain("UI_CN_UTILITY_MISSING");
+
+    await mkdir(join(root, "src", "components", "ui"), { recursive: true });
+    await mkdir(join(root, "src", "lib"), { recursive: true });
+    await writeFile(join(root, "components.json"), JSON.stringify({ tailwind: { cssVariables: true }, aliases: { ui: "@/components/ui", utils: "@/lib/utils" } }));
+    await writeFile(join(root, "src", "lib", "utils.ts"), 'import { clsx } from "clsx"; import { twMerge } from "tailwind-merge"; export function cn(...input: unknown[]) { return twMerge(clsx(input)); }');
+    await writeFile(join(root, "src", "components", "ui", "button.tsx"), "export const Button = () => null;");
+    await writeFile(join(root, "src", "app.tsx"), 'import { Button } from "@/components/ui/button"; import { cn } from "@/lib/utils"; export function App(){ return <Button className={cn("min-h-11", true && "focus-visible:ring-2")} />; }');
+
+    await expect(verifyWorkspaceUi(root)).resolves.toMatchObject({ ok: true, issues: [] });
   });
 });
