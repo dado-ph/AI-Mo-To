@@ -107,11 +107,7 @@ export class ProposalCommitError extends Error {
 }
 
 export const WORKSPACE_DIRECTORIES = [
-  ".aimoto/context",
-  ".aimoto/modules/local",
-  ".aimoto/snapshots",
-  "files",
-  "exports"
+  ".aimoto/versions"
 ] as const;
 
 export function workspaceManifestPath(root: string): string {
@@ -128,6 +124,37 @@ export async function initializeWorkspaceLayout(root: string): Promise<void> {
       mkdir(join(root, directory), { recursive: true })
     )
   );
+}
+
+/** Creates only the metadata needed by a newly handed-off workspace. */
+export async function createMinimalWorkspace(root: string, name: string): Promise<WorkspaceManifest> {
+  const workspaceId = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!/^[a-z][a-z0-9-]{2,63}$/.test(workspaceId)) {
+    throw new Error("A workspace name must produce an id of 3 to 64 lowercase letters, numbers, or hyphens.");
+  }
+  const manifest: WorkspaceManifest = {
+    schemaVersion: 2,
+    workspaceId,
+    name,
+    createdAt: new Date().toISOString(),
+    revision: 0,
+    currentVersionId: null
+  };
+  await initializeWorkspaceLayout(root);
+  await mkdir(join(root, ".aimoto"), { recursive: true });
+  await writeWorkspaceManifest(root, manifest);
+  const notesPath = join(root, ".aimoto", "notes.json");
+  try {
+    await readFile(notesPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    await writeFile(notesPath, "[]\n", "utf8");
+  }
+  return manifest;
 }
 
 export async function writeWorkspaceManifest(
