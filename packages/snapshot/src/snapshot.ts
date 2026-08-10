@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 
 export interface SnapshotObjectRef {
   readonly digest: string;
@@ -8,24 +8,18 @@ export interface SnapshotObjectRef {
   readonly size: number;
 }
 
-export interface SnapshotModule {
-  readonly moduleId: string;
-  readonly version: string;
-  readonly bundle: SnapshotObjectRef;
-  readonly schema: SnapshotObjectRef;
+export interface SnapshotFileRef {
+  readonly path: string;
+  readonly object: SnapshotObjectRef;
 }
 
 export interface SnapshotManifest {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly workspaceId: string;
   readonly workspaceRevision: number;
-  readonly workspaceManifest: SnapshotObjectRef;
-  /** Immutable record of every workspace revision known at snapshot time. */
-  readonly revisions: SnapshotObjectRef;
-  readonly modules: readonly SnapshotModule[];
-  readonly data: SnapshotObjectRef;
-  readonly context: SnapshotObjectRef;
-  readonly eventLogPosition: number;
+  readonly workspaceVersion: SnapshotObjectRef;
+  readonly fileManifest: SnapshotObjectRef;
+  readonly files: readonly SnapshotFileRef[];
   readonly engineConfigurationRefs: readonly string[];
   readonly credentialBindingKeys: readonly string[];
 }
@@ -33,18 +27,12 @@ export interface SnapshotManifest {
 export interface SnapshotInput {
   readonly workspaceId: string;
   readonly workspaceRevision: number;
-  readonly workspaceManifest: unknown;
-  readonly revisions: unknown;
-  readonly modules: readonly {
-    readonly moduleId: string;
-    readonly version: string;
-    readonly bundle: Uint8Array;
-    readonly schema: unknown;
+  readonly workspaceVersion: unknown;
+  readonly files: readonly {
+    readonly path: string;
+    readonly content: Uint8Array;
   }[];
-  readonly data: unknown;
-  readonly context: Readonly<Record<string, string>>;
-  readonly eventLogPosition: number;
-  readonly engineConfigurationRefs: readonly string[];
+  readonly engineConfigurationRefs?: readonly string[];
   readonly credentialBindingKeys?: readonly string[];
   readonly credentials?: never;
   readonly secrets?: never;
@@ -62,53 +50,15 @@ export interface SnapshotVerification {
   readonly manifest?: SnapshotManifest;
 }
 
-/**
- * Reads the captured workspace manifest only after verifying the complete
- * snapshot. Callers use this to materialize a restore proposal; they should
- * still bind the returned snapshot id and object digest in their ChangeSet.
- */
-export async function readVerifiedWorkspaceManifest(
-  root: string,
-  snapshotId: string,
-): Promise<{ readonly manifest: unknown; readonly manifestDigest: string; readonly snapshot: SnapshotManifest }> {
-  const verification = await verifySnapshot(root, snapshotId);
-  if (!verification.valid || !verification.manifest) {
-    throw new Error(`Snapshot verification failed: ${verification.errors.join("; ")}`);
-  }
-  const content = await readFile(join(root, "objects", verification.manifest.workspaceManifest.digest));
-  return {
-    manifest: JSON.parse(content.toString("utf8")) as unknown,
-    manifestDigest: verification.manifest.workspaceManifest.digest,
-    snapshot: verification.manifest,
-  };
-}
-
-export async function readVerifiedSnapshotData(
-  root: string,
-  snapshotId: string,
-): Promise<{ readonly data: unknown; readonly dataDigest: string; readonly snapshot: SnapshotManifest }> {
-  const verification = await verifySnapshot(root, snapshotId);
-  if (!verification.valid || !verification.manifest) {
-    throw new Error(`Snapshot verification failed: ${verification.errors.join("; ")}`);
-  }
-  const content = await readFile(join(root, "objects", verification.manifest.data.digest));
-  return {
-    data: JSON.parse(content.toString("utf8")) as unknown,
-    dataDigest: verification.manifest.data.digest,
-    snapshot: verification.manifest,
-  };
-}
-
 export interface RestorePlan {
-  readonly kind: "restore-as-new-revision";
+  readonly kind: "restore-as-new-version";
   readonly snapshotId: string;
   readonly workspaceId: string;
   readonly sourceRevision: number;
   readonly baseRevision: number;
   readonly targetRevision: number;
   readonly manifest: SnapshotManifest;
-  /** Content-addressed bundles that must be available before any future restore apply. */
-  readonly requiredModuleBundleDigests: readonly string[];
+  readonly requiredFileDigests: readonly string[];
   readonly requiredCredentialBindingKeys: readonly string[];
 }
 
@@ -146,15 +96,30 @@ function digest(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function assertWorkspacePath(path: string): void {
+  if (
+    !path ||
+    path.includes("\\") ||
+    isAbsolute(path) ||
+    path.split("/").some((part) => !part || part === "." || part === "..")
+  ) {
+    throw new Error(`Unsafe workspace-relative path: ${path}`);
+  }
+}
+
 function assertSafeInput(input: SnapshotInput): void {
   const candidate = input as SnapshotInput & Record<string, unknown>;
   if ("credentials" in candidate || "secrets" in candidate) {
     throw new Error("Credentials and secret values must not be included in snapshots");
   }
-  if (!input.workspaceId || !Number.isSafeInteger(input.workspaceRevision) ||
-      input.workspaceRevision < 0 || !Number.isSafeInteger(input.eventLogPosition) ||
-      input.eventLogPosition < 0) {
-    throw new Error("Snapshot identity, revision, or event position is invalid");
+  if (!input.workspaceId || !Number.isSafeInteger(input.workspaceRevision) || input.workspaceRevision < 0) {
+    throw new Error("Snapshot identity or revision is invalid");
+  }
+  const paths = new Set<string>();
+  for (const file of input.files) {
+    assertWorkspacePath(file.path);
+    if (paths.has(file.path)) throw new Error(`Duplicate workspace file path: ${file.path}`);
+    paths.add(file.path);
   }
 }
 
@@ -181,30 +146,27 @@ async function putObject(
 
 export async function createSnapshot(root: string, input: SnapshotInput): Promise<CreatedSnapshot> {
   assertSafeInput(input);
-  const workspaceManifest = await putObject(root, bytes(input.workspaceManifest), "application/json");
-  const revisions = await putObject(root, bytes(input.revisions), "application/json");
-  const data = await putObject(root, bytes(input.data), "application/json");
-  const context = await putObject(root, bytes(input.context), "application/json");
-  const modules: SnapshotModule[] = [];
-  for (const module of [...input.modules].sort((a, b) => a.moduleId.localeCompare(b.moduleId))) {
-    modules.push({
-      moduleId: module.moduleId,
-      version: module.version,
-      bundle: await putObject(root, module.bundle, "application/octet-stream"),
-      schema: await putObject(root, bytes(module.schema), "application/json"),
+  const workspaceVersion = await putObject(root, bytes(input.workspaceVersion), "application/json");
+  const files: SnapshotFileRef[] = [];
+  for (const file of [...input.files].sort((left, right) => left.path.localeCompare(right.path))) {
+    files.push({
+      path: file.path,
+      object: await putObject(root, file.content, "application/octet-stream"),
     });
   }
+  const fileManifest = await putObject(
+    root,
+    bytes(files.map((file) => ({ path: file.path, digest: file.object.digest, size: file.object.size }))),
+    "application/json",
+  );
   const manifest: SnapshotManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     workspaceId: input.workspaceId,
     workspaceRevision: input.workspaceRevision,
-    workspaceManifest,
-    revisions,
-    modules,
-    data,
-    context,
-    eventLogPosition: input.eventLogPosition,
-    engineConfigurationRefs: [...input.engineConfigurationRefs].sort(),
+    workspaceVersion,
+    fileManifest,
+    files,
+    engineConfigurationRefs: [...(input.engineConfigurationRefs ?? [])].sort(),
     credentialBindingKeys: [...(input.credentialBindingKeys ?? [])].sort(),
   };
   const manifestBytes = bytes(manifest);
@@ -220,14 +182,43 @@ export async function createSnapshot(root: string, input: SnapshotInput): Promis
   return { snapshotId, path: snapshotPath, manifest };
 }
 
+function isObjectRef(value: unknown): value is SnapshotObjectRef {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<SnapshotObjectRef>;
+  return typeof candidate.digest === "string" &&
+    (candidate.mediaType === "application/json" || candidate.mediaType === "application/octet-stream") &&
+    Number.isSafeInteger(candidate.size) && (candidate.size ?? -1) >= 0;
+}
+
+function parseManifest(value: unknown): SnapshotManifest | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Partial<SnapshotManifest>;
+  if (
+    candidate.schemaVersion !== 2 ||
+    typeof candidate.workspaceId !== "string" || !candidate.workspaceId ||
+    !Number.isSafeInteger(candidate.workspaceRevision) || (candidate.workspaceRevision ?? -1) < 0 ||
+    !isObjectRef(candidate.workspaceVersion) ||
+    !isObjectRef(candidate.fileManifest) ||
+    !Array.isArray(candidate.files) ||
+    !Array.isArray(candidate.engineConfigurationRefs) ||
+    !Array.isArray(candidate.credentialBindingKeys)
+  ) return undefined;
+  const seen = new Set<string>();
+  for (const file of candidate.files) {
+    if (!file || typeof file !== "object") return undefined;
+    const entry = file as Partial<SnapshotFileRef>;
+    if (typeof entry.path !== "string" || !isObjectRef(entry.object)) return undefined;
+    try { assertWorkspacePath(entry.path); } catch { return undefined; }
+    if (seen.has(entry.path)) return undefined;
+    seen.add(entry.path);
+  }
+  if (!candidate.engineConfigurationRefs.every((ref) => typeof ref === "string") ||
+      !candidate.credentialBindingKeys.every((key) => typeof key === "string")) return undefined;
+  return candidate as SnapshotManifest;
+}
+
 function objectRefs(manifest: SnapshotManifest): SnapshotObjectRef[] {
-  return [
-    manifest.workspaceManifest,
-    manifest.revisions,
-    manifest.data,
-    manifest.context,
-    ...manifest.modules.flatMap((module) => [module.bundle, module.schema]),
-  ];
+  return [manifest.workspaceVersion, manifest.fileManifest, ...manifest.files.map((file) => file.object)];
 }
 
 /** Lists snapshots without trusting them: each returned entry includes integrity status. */
@@ -239,17 +230,16 @@ export async function listSnapshots(root: string): Promise<readonly SnapshotSumm
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
-  const summaries = await Promise.all(entries.sort().map(async (snapshotId) => {
+  return Promise.all(entries.sort().map(async (snapshotId) => {
     const verification = await verifySnapshot(root, snapshotId);
     return {
       snapshotId,
       workspaceId: verification.manifest?.workspaceId ?? "unknown",
       workspaceRevision: verification.manifest?.workspaceRevision ?? -1,
       valid: verification.valid,
-      errors: verification.errors
+      errors: verification.errors,
     };
   }));
-  return summaries;
 }
 
 export async function verifySnapshot(root: string, snapshotId: string): Promise<SnapshotVerification> {
@@ -261,12 +251,14 @@ export async function verifySnapshot(root: string, snapshotId: string): Promise<
     return { valid: false, errors: [`Missing snapshot manifest: ${snapshotId}`] };
   }
   if (digest(raw) !== snapshotId) errors.push("Snapshot manifest digest mismatch");
-  let manifest: SnapshotManifest;
+  let parsed: unknown;
   try {
-    manifest = JSON.parse(raw.toString("utf8")) as SnapshotManifest;
+    parsed = JSON.parse(raw.toString("utf8")) as unknown;
   } catch {
     return { valid: false, errors: [...errors, "Snapshot manifest is not valid JSON"] };
   }
+  const manifest = parseManifest(parsed);
+  if (!manifest) return { valid: false, errors: [...errors, "Snapshot manifest contract is invalid"] };
   for (const reference of objectRefs(manifest)) {
     try {
       const content = await readFile(join(root, "objects", reference.digest));
@@ -277,6 +269,32 @@ export async function verifySnapshot(root: string, snapshotId: string): Promise<
     }
   }
   return { valid: errors.length === 0, errors, manifest };
+}
+
+async function readVerifiedJsonObject(
+  root: string,
+  snapshotId: string,
+  select: (manifest: SnapshotManifest) => SnapshotObjectRef,
+): Promise<{ readonly value: unknown; readonly digest: string; readonly snapshot: SnapshotManifest }> {
+  const verification = await verifySnapshot(root, snapshotId);
+  if (!verification.valid || !verification.manifest) {
+    throw new Error(`Snapshot verification failed: ${verification.errors.join("; ")}`);
+  }
+  const reference = select(verification.manifest);
+  const content = await readFile(join(root, "objects", reference.digest));
+  return {
+    value: JSON.parse(content.toString("utf8")) as unknown,
+    digest: reference.digest,
+    snapshot: verification.manifest,
+  };
+}
+
+export async function readVerifiedWorkspaceVersion(root: string, snapshotId: string) {
+  return readVerifiedJsonObject(root, snapshotId, (manifest) => manifest.workspaceVersion);
+}
+
+export async function readVerifiedFileManifest(root: string, snapshotId: string) {
+  return readVerifiedJsonObject(root, snapshotId, (manifest) => manifest.fileManifest);
 }
 
 export async function planRestore(
@@ -291,18 +309,15 @@ export async function planRestore(
   if (!verification.valid || !verification.manifest) {
     throw new Error(`Snapshot verification failed: ${verification.errors.join("; ")}`);
   }
-  for (const module of verification.manifest.modules) {
-    await stat(join(root, "objects", module.bundle.digest));
-  }
   return Object.freeze({
-    kind: "restore-as-new-revision",
+    kind: "restore-as-new-version",
     snapshotId,
     workspaceId: verification.manifest.workspaceId,
     sourceRevision: verification.manifest.workspaceRevision,
     baseRevision: activeRevision,
     targetRevision: activeRevision + 1,
     manifest: verification.manifest,
-    requiredModuleBundleDigests: verification.manifest.modules.map((module) => module.bundle.digest),
+    requiredFileDigests: verification.manifest.files.map((file) => file.object.digest),
     requiredCredentialBindingKeys: verification.manifest.credentialBindingKeys,
   });
 }

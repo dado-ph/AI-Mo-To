@@ -1,35 +1,9 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": 2,
   "workspaceId": "default-workspace",
   "name": "Default Workspace",
   "createdAt": "2026-07-29T00:00:00.000Z",
   "revision": 0,
-  "modules": [
-    {
-      "moduleId": "ai-mo-to.tasks",
-      "version": "0.1.0",
-      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "source": {
-        "kind": "builtin",
-        "reference": "modules/tasks"
-      }
-    }
-  ],
-  "layout": {
-    "homeView": "tasks.list",
-    "views": [
-      {
-        "id": "tasks.list",
-        "moduleId": "ai-mo-to.tasks",
-        "viewId": "task-list"
-      }
-    ]
-  },
-  "capabilities": [],
-  "eventRoutes": [],
-  "aiAdapter": "none",
-  "authorityMode": "suggest",
-  "contextPolicy": "bounded-v1",
-  "snapshotPolicy": "on-structural-change"
+  "currentVersionId": null
 }
 

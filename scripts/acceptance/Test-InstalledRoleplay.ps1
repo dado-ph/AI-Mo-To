@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$RunRoot,
   [switch]$SkipRepositoryCheck
@@ -7,7 +7,6 @@ param(
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath $RunRoot).Path
 $evidenceRoot = Join-Path $root "evidence"
-$manifestPath = Join-Path $evidenceRoot "manifest.json"
 $failures = [System.Collections.Generic.List[string]]::new()
 
 function Require([bool]$condition, [string]$message) {
@@ -26,55 +25,43 @@ function Evidence-Data($value) {
   if ($null -ne $value -and $null -ne $value.data) { return $value.data }
   return $value
 }
-function Revision($value) {
-  $body = Evidence-Data $value
-  if ($null -ne $body.workspace -and $null -ne $body.workspace.revision) { return [long]$body.workspace.revision }
-  if ($null -ne $body.revision) { return [long]$body.revision }
-  return -1
-}
-function Proposal($value) {
-  $body = Evidence-Data $value
-  if ($null -ne $body.proposal) { return $body.proposal }
-  return $body
-}
-function Error-Code($value) {
-  if ($null -ne $value.error.code) { return [string]$value.error.code }
-  if ($null -ne $value.code -and $value.ok -eq $false) { return [string]$value.code }
-  return ""
-}
-function Records($value) {
-  $body = Evidence-Data $value
-  if ($body -is [array]) { return @($body) }
-  if ($null -ne $body.records) { return @($body.records) }
-  if ($null -ne $body.events) { return @($body.events) }
-  if ($null -ne $body.record) { return @($body.record) }
-  return @($body)
-}
-function Record-Id($value) {
-  if ($null -ne $value.recordId) { return [string]$value.recordId }
-  if ($null -ne $value.data.recordId) { return [string]$value.data.recordId }
-  if ($null -ne $value.data.habitId) { return [string]$value.data.habitId }
-  return ""
-}
-function Canonical($value) { return ($value | ConvertTo-Json -Depth 30 -Compress) }
 function Get-Sha256([string]$path) {
   $hasher = [System.Security.Cryptography.SHA256]::Create()
   try {
     return ([System.BitConverter]::ToString($hasher.ComputeHash([System.IO.File]::ReadAllBytes($path))) -replace "-", "").ToLowerInvariant()
-  } finally {
-    $hasher.Dispose()
+  } finally { $hasher.Dispose() }
+}
+function Versions($value) {
+  $body = Evidence-Data $value
+  if ($null -eq $body -or $null -eq $body.versions) { return @() }
+  return @($body.versions)
+}
+function Version($value) {
+  $body = Evidence-Data $value
+  if ($null -ne $body.version) { return $body.version }
+  return $body
+}
+function File-Map($value) {
+  $map = @{}
+  $body = Evidence-Data $value
+  foreach ($file in @($body.files)) {
+    if ($null -ne $file -and -not [string]::IsNullOrWhiteSpace([string]$file.path)) {
+      $map[[string]$file.path] = [string]$file.sha256
+    }
   }
+  return $map
 }
 
 $manifest = Read-Json "manifest.json"
 if ($null -eq $manifest) { exit 1 }
-Require ($manifest.schemaVersion -eq 2) "Unsupported evidence schema; semantic evidence version 2 is required."
+Require ($manifest.schemaVersion -eq 3) "Unsupported evidence schema; semantic evidence version 3 is required."
 Require (-not ([string]$manifest.isolationRoot).StartsWith([string]$manifest.repositoryRoot, [System.StringComparison]::OrdinalIgnoreCase)) "Run is inside the repository."
 Require (([System.IO.Path]::GetFullPath([string]$manifest.workspaceRoot)).StartsWith(([System.IO.Path]::GetFullPath([string]$manifest.isolationRoot)), [System.StringComparison]::OrdinalIgnoreCase)) "Workspace is not inside the fresh isolation root."
 Require (Test-Path -LiteralPath $manifest.artifact.path -PathType Leaf) "Recorded installer artifact is missing."
 if (Test-Path -LiteralPath $manifest.artifact.path -PathType Leaf) {
   Require ((Get-Sha256 $manifest.artifact.path) -eq $manifest.artifact.sha256) "Installer artifact digest changed."
 }
+
 $installResult = Read-Json "install/result.json"
 $pathResilience = Read-Json "install/path-resilience.json"
 if ($installResult) {
@@ -96,6 +83,7 @@ if ($journey) {
   Require ($journey.freshSession -eq $true) "Initial agent turn reused an existing session."
   Require (([System.IO.Path]::GetFullPath([string]$journey.workingDirectory)) -eq ([System.IO.Path]::GetFullPath([string]$manifest.workspaceRoot))) "Agent did not start in the isolated workspace root."
   Require (-not $journey.technicalCoaching) "Journey records technical coaching."
+  Require ([datetime]$journey.approvalRecordedAt -gt [datetime]$journey.initialTurnCompletedAt) "Version approval was not a later human action."
 }
 
 $runtime = Read-Json "runtime/codex-preflight.json"
@@ -105,140 +93,94 @@ if ($runtime) {
   Require (@($runtime.attempts).Count -le 2) "Codex runtime exceeded its bounded retry."
 }
 
-$beforePlan = Read-Json "plan/before-inspect.json"
-$proposalEnvelope = Read-Json "plan/proposal.json"
-$afterPlan = Read-Json "plan/after-inspect.json"
-$proposal = Proposal $proposalEnvelope
-$digestPattern = '^sha256:[a-f0-9]{64}$'
-if ($beforePlan -and $proposal -and $afterPlan) {
-  $beforeRevision = Revision $beforePlan
-  $afterPlanRevision = Revision $afterPlan
-  Require ($beforeRevision -ge 0 -and $afterPlanRevision -eq $beforeRevision) "Planning mutated the workspace revision."
-  Require (-not [string]::IsNullOrWhiteSpace([string]$proposal.proposalId)) "Proposal has no proposal ID."
-  Require ([string]$proposal.changeSetDigest -match $digestPattern) "Proposal has no valid exact digest."
-  Require ([long]$proposal.baseRevision -eq $beforeRevision) "Proposal base revision does not match the inspected revision."
-  Require ($proposal.status -eq "pending") "Plan evidence is not a pending proposal."
+$beforeVersions = Read-Json "request/before-versions.json"
+$briefEnvelope = Read-Json "request/implementation-brief.json"
+$afterVersions = Read-Json "request/after-versions.json"
+Require ((Versions $beforeVersions).Count -eq 0) "The fresh workspace already had a version."
+Require ((Versions $afterVersions).Count -eq 0) "Request created a version before explicit approval."
+if ($briefEnvelope) {
+  $brief = (Evidence-Data $briefEnvelope).implementationBrief
+  Require ($null -ne $brief) "Request did not return an implementation brief."
+  if ($brief) {
+    Require (([System.IO.Path]::GetFullPath([string]$brief.workspaceRoot)) -eq ([System.IO.Path]::GetFullPath([string]$manifest.workspaceRoot))) "Implementation brief returned the wrong workspace root."
+    Require ($brief.request -ceq $expectedPrompt) "Implementation brief did not preserve the request."
+    Require ([string]$brief.instructions -match '(?i)has not built|must now implement') "Implementation brief did not hand implementation to the agent."
+  }
 }
 
-$wrongBefore = Read-Json "negative/wrong-digest-before.json"
-$wrongAttempt = Read-Json "negative/wrong-digest-attempt.json"
-$wrongAfter = Read-Json "negative/wrong-digest-after.json"
-if ($wrongBefore -and $wrongAttempt -and $wrongAfter -and $proposal) {
-  Require ((Error-Code $wrongAttempt) -match '(?i)digest|hash|approval') "Wrong-digest attempt was not rejected for its digest."
-  Require ((Revision $wrongBefore) -eq (Revision $wrongAfter)) "Wrong-digest rejection mutated the revision."
-  $attemptBody = Evidence-Data $wrongAttempt
-  if ($attemptBody.attemptedDigest) { Require ($attemptBody.attemptedDigest -ne $proposal.changeSetDigest) "Wrong-digest evidence used the correct digest." }
+$implementation = Read-Json "implementation/files.json"
+$implementationFiles = File-Map $implementation
+Require ($implementationFiles.Count -gt 0) "Implementation evidence contains no workspace files."
+foreach ($relativePath in $implementationFiles.Keys) {
+  $unsafe = [System.IO.Path]::IsPathRooted($relativePath) -or $relativePath.Contains("\") -or $relativePath.Split('/') -contains ".." -or $relativePath.StartsWith(".aimoto/versions/")
+  Require (-not $unsafe) "Implementation evidence contains an unsafe or captured-version path: $relativePath."
+  if (-not $unsafe) {
+    $path = Join-Path $manifest.workspaceRoot $relativePath
+    Require (Test-Path -LiteralPath $path -PathType Leaf) "Implemented workspace file is missing: $relativePath."
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+      Require ((Get-Sha256 $path) -eq $implementationFiles[$relativePath]) "Implemented workspace file digest changed: $relativePath."
+    }
+  }
 }
-
-$staleBefore = Read-Json "negative/stale-before.json"
-$staleAttempt = Read-Json "negative/stale-attempt.json"
-$staleAfter = Read-Json "negative/stale-after.json"
-if ($staleBefore -and $staleAttempt -and $staleAfter) {
-  Require ((Error-Code $staleAttempt) -match '(?i)stale|revision|precondition') "Stale proposal was not rejected as stale."
-  Require ((Revision $staleBefore) -eq (Revision $staleAfter)) "Stale rejection mutated the revision."
-  $staleBody = Evidence-Data $staleAttempt
-  if ($null -ne $staleBody.baseRevision) { Require ([long]$staleBody.baseRevision -lt (Revision $staleBefore)) "Stale evidence does not identify an older base revision." }
+if ($implementation) {
+  $verification = (Evidence-Data $implementation).verification
+  Require ($verification.interactiveUi -eq $true -and $verification.callbacks -eq $true -and $verification.tests -eq $true) "Implementation evidence does not verify UI, callbacks, and tests."
 }
 
 $approvalPath = Join-Path $evidenceRoot "approval/human.txt"
-if (-not (Test-Path -LiteralPath $approvalPath -PathType Leaf)) { Require $false "Missing evidence/approval/human.txt." }
-elseif ($proposal) {
+if (-not (Test-Path -LiteralPath $approvalPath -PathType Leaf)) {
+  Require $false "Missing evidence/approval/human.txt."
+} else {
   $approval = Get-Content -LiteralPath $approvalPath -Raw
-  Require ($approval -match '(?i)\bapprove\b') "Later human approval is not explicit."
-  Require ($approval.Contains([string]$proposal.proposalId)) "Human approval is not bound to the proposal ID."
-  Require ($approval.Contains([string]$proposal.changeSetDigest)) "Human approval is not bound to the exact proposal digest."
-  if ($journey) { Require ([datetime]$journey.approvalRecordedAt -gt [datetime]$journey.initialTurnCompletedAt) "Approval was not a later human action." }
+  Require ($approval -match '(?i)\bapprove\b' -and $approval -match '(?i)\b(save|version)\b') "Human approval does not explicitly authorize saving a version."
+}
+$createdEnvelope = Read-Json "approval/version-create.json"
+$approvedVersionsEnvelope = Read-Json "approval/versions.json"
+$createdVersion = Version $createdEnvelope
+$approvedVersions = Versions $approvedVersionsEnvelope
+$digestPattern = '^sha256:[a-f0-9]{64}$'
+if ($createdVersion) {
+  Require (-not [string]::IsNullOrWhiteSpace([string]$createdVersion.versionId)) "Version create returned no version ID."
+  Require ([long]$createdVersion.revision -gt 0) "Version create did not advance the revision."
+  Require ([string]$createdVersion.fileManifestDigest -match $digestPattern) "Version create returned no file manifest digest."
+  Require ($null -eq $createdVersion.parentVersionId) "The first version has an unexpected parent."
+  Require (@($approvedVersions | Where-Object { $_.versionId -eq $createdVersion.versionId }).Count -eq 1) "The approved version is absent from version history."
 }
 
-$afterApply = Read-Json "approval/after-inspect.json"
-$provenance = Read-Json "inspection/provenance.json"
-if ($afterApply -and $proposal) {
-  Require ((Revision $afterApply) -gt [long]$proposal.baseRevision) "Approved apply did not advance the revision."
-  $body = Evidence-Data $afterApply
-  Require (@($body.modules).Count -gt 0) "Post-apply inspection contains no installed module."
+$beforeRestore = Versions (Read-Json "recovery/before-restore-versions.json")
+$restoredVersion = Version (Read-Json "recovery/restore-result.json")
+$afterRestore = Versions (Read-Json "recovery/after-restore-versions.json")
+$restoredFiles = File-Map (Read-Json "recovery/restored-files.json")
+if ($createdVersion -and $restoredVersion) {
+  Require ($restoredVersion.versionId -ne $createdVersion.versionId) "Restore overwrote the selected version instead of creating a new one."
+  Require ($restoredVersion.parentVersionId -eq $createdVersion.versionId) "Restored version is not linked to the selected version."
+  Require ([long]$restoredVersion.revision -gt [long]$createdVersion.revision) "Restore did not advance the revision."
+  Require (@($beforeRestore | Where-Object { $_.versionId -eq $createdVersion.versionId }).Count -eq 1) "Selected version was absent before restore."
+  Require (@($afterRestore | Where-Object { $_.versionId -eq $createdVersion.versionId }).Count -eq 1) "Restore did not preserve the selected version."
+  Require (@($afterRestore | Where-Object { $_.versionId -eq $restoredVersion.versionId }).Count -eq 1) "Restore result is absent from version history."
 }
-if ($provenance -and $proposal -and $afterApply) {
-  $p = Evidence-Data $provenance
-  $pText = Canonical $p
-  Require ($pText.Contains([string]$proposal.proposalId)) "Provenance is not linked to the applied proposal."
-  Require ($pText.Contains([string]$proposal.changeSetDigest)) "Provenance is not linked to the approved digest."
-  Require ($pText -match [regex]::Escape([string](Revision $afterApply))) "Provenance is not linked to the resulting revision."
-}
-
-$created = Read-Json "inspection/record-create.json"
-$logged = Read-Json "inspection/record-log.json"
-$postChange = Read-Json "inspection/post-change-records.json"
-$createdId = ""
-if ($created) {
-  $createdRecords = Records $created
-  $createdId = Record-Id $createdRecords[0]
-  Require (-not [string]::IsNullOrWhiteSpace($createdId)) "Record-create evidence has no durable record ID."
-}
-if ($logged -and $createdId) {
-  $logText = Canonical (Records $logged)
-  Require ($logText.Contains($createdId)) "Record log does not contain the created record."
-  Require ($logText -match '(?i)created|completed|logged|entry') "Record log contains no usable create/log event."
-}
-if ($postChange -and $createdId) {
-  Require ((Canonical (Records $postChange)).Contains($createdId)) "Post-change records lost the created record before restoration."
-}
-
-$snapshot = Read-Json "recovery/snapshot.json"
-$restoreProposalEnvelope = Read-Json "recovery/restore-proposal.json"
-$restoreWrongBefore = Read-Json "recovery/wrong-digest-before.json"
-$restoreWrongAttempt = Read-Json "recovery/wrong-digest-attempt.json"
-$restoreWrongAfter = Read-Json "recovery/wrong-digest-after.json"
-$restoreResult = Read-Json "recovery/restore-result.json"
-$restoredRecords = Read-Json "recovery/restored-records.json"
-$history = Read-Json "recovery/history.json"
-$restoreProposal = Proposal $restoreProposalEnvelope
-if ($snapshot) {
-  $s = Evidence-Data $snapshot
-  Require (-not [string]::IsNullOrWhiteSpace([string]$s.snapshotId)) "Snapshot has no content-addressed ID."
-  Require ($null -ne $s.revision -or $null -ne $s.manifest.workspace.revision) "Snapshot has no revision metadata."
-  Require ($null -ne $s.createdAt -or $null -ne $s.manifest.createdAt) "Snapshot has no creation metadata."
-}
-if ($restoreProposal) {
-  Require ($restoreProposal.status -eq "pending") "Restore evidence is not a pending proposal."
-  Require ([string]$restoreProposal.changeSetDigest -match $digestPattern) "Restore proposal has no exact digest."
-  Require ((Canonical $restoreProposal) -match 'restore') "Restore proposal does not describe restoration."
-}
-if ($restoreWrongBefore -and $restoreWrongAttempt -and $restoreWrongAfter) {
-  Require ((Error-Code $restoreWrongAttempt) -match '(?i)digest|hash|approval') "Wrong restore digest was not rejected."
-  Require ((Revision $restoreWrongBefore) -eq (Revision $restoreWrongAfter)) "Wrong restore digest mutated the revision."
-}
-$restoreApprovalPath = Join-Path $evidenceRoot "recovery/human-approval.txt"
-if (-not (Test-Path -LiteralPath $restoreApprovalPath -PathType Leaf)) { Require $false "Missing evidence/recovery/human-approval.txt." }
-elseif ($restoreProposal) {
-  $restoreApproval = Get-Content -LiteralPath $restoreApprovalPath -Raw
-  Require ($restoreApproval -match '(?i)\bapprove\b' -and $restoreApproval.Contains([string]$restoreProposal.proposalId) -and $restoreApproval.Contains([string]$restoreProposal.changeSetDigest)) "Restore approval is not explicit and exactly bound."
-}
-if ($restoreResult -and $restoreProposal) {
-  $restoreRevision = Revision $restoreResult
-  Require ($restoreRevision -gt [long]$restoreProposal.baseRevision) "Approved restore did not create a new revision."
-}
-if ($restoredRecords -and $createdId) {
-  Require ((Canonical (Records $restoredRecords)).Contains($createdId)) "Restoration did not recover the original record values."
-}
-if ($history -and $restoreResult) {
-  $historyText = Canonical (Evidence-Data $history)
-  Require ($historyText -match '(?i)restore') "History does not retain the restore event."
-  Require ($historyText -match [regex]::Escape([string](Revision $restoreResult))) "History does not retain the new restore revision."
+foreach ($relativePath in $implementationFiles.Keys) {
+  Require ($restoredFiles.ContainsKey($relativePath)) "Restoration lost workspace file: $relativePath."
+  if ($restoredFiles.ContainsKey($relativePath)) {
+    Require ($restoredFiles[$relativePath] -eq $implementationFiles[$relativePath]) "Restoration did not recover the captured bytes: $relativePath."
+  }
 }
 
 $desktop = Read-Json "inspection/desktop-result.json"
 if ($desktop) {
-  $d = Evidence-Data $desktop
-  Require ($d.packaged -eq $true) "Desktop proof is not from the packaged application."
-  Require ($d.launched -eq $true -and $d.workspaceOpened -eq $true) "Packaged desktop did not launch and open the workspace."
-  Require (-not [string]::IsNullOrWhiteSpace([string]$d.executablePath)) "Packaged desktop proof has no executable path."
-  Require (-not ([string]$d.executablePath).StartsWith([string]$manifest.repositoryRoot, [System.StringComparison]::OrdinalIgnoreCase)) "Desktop was launched from the source repository."
-  Require ($d.observedModule -eq $true -and $d.observedRecords -eq $true) "Packaged desktop proof did not observe the installed module and records."
+  $result = Evidence-Data $desktop
+  Require ($result.packaged -eq $true) "Desktop proof is not from the packaged application."
+  Require ($result.launched -eq $true -and $result.workspaceOpened -eq $true) "Packaged desktop did not launch and open the workspace."
+  Require (-not ([string]$result.executablePath).StartsWith([string]$manifest.repositoryRoot, [System.StringComparison]::OrdinalIgnoreCase)) "Desktop was launched from the source repository."
+  if ($restoredVersion) { Require ($result.currentVersionId -eq $restoredVersion.versionId) "Desktop did not observe the current restored version." }
+  Require ([long]$result.versionCount -ge 2) "Desktop did not expose version history."
 }
 
 $transcripts = Get-ChildItem -LiteralPath $evidenceRoot -Filter "*.jsonl" -File -Recurse -ErrorAction SilentlyContinue
 $transcriptText = ($transcripts | Get-Content -Raw) -join "`n"
-Require ($transcriptText -match '(?i)\baimoto(?:\.exe)?\b') "Agent transcript does not show use of the installed aimoto CLI."
+Require ($transcriptText -match '(?i)aimoto\s+request') "Agent transcript does not show the installed request command."
+Require ($transcriptText -match '(?i)aimoto\s+version\s+create') "Agent transcript does not show explicit version creation."
+Require ($transcriptText -notmatch '(?i)module\.install|module bundle|--agent') "Agent transcript used the removed module or generated-app workflow."
 Require ($transcriptText -notmatch '(?i)\b(pnpm|npm\s+run|yarn|bun)\b') "Agent used a source/development package runner."
 Require ($transcriptText -notmatch [regex]::Escape([string]$manifest.repositoryRoot)) "Agent transcript accessed the source repository."
 
@@ -259,5 +201,4 @@ if ($failures.Count -gt 0) {
   $failures | ForEach-Object { [Console]::Error.WriteLine("FAIL: $_") }
   exit 1
 }
-Write-Output "Installed-product role-play evidence passed semantic checks."
-
+Write-Output "Installed-product role-play evidence passed direct-workspace semantic checks."
