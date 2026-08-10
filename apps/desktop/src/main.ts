@@ -255,7 +255,8 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
     restoreWorkspaceVersion: (root, versionId) => engine.restoreWorkspaceVersion(root, versionId),
     createTerminal: async (root) => ({ sessionId: `term-stub-${root?.length ?? 0}` }),
     writeTerminal: async () => {},
-    onTerminalData: () => {},
+    closeTerminal: async () => {},
+    onTerminalData: () => () => {},
     resizeTerminal: async () => {}
   };
 }
@@ -356,6 +357,7 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
         sender?.send?.("terminal:data", { sessionId, chunk: data });
       });
 
+      proc.onExit(() => activeTerminals.delete(sessionId));
       activeTerminals.set(sessionId, { type: "pty", proc });
       return { sessionId };
     } catch {
@@ -373,6 +375,7 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
         sender?.send?.("terminal:data", { sessionId, chunk: chunk.toString("utf8") });
       });
 
+      proc.on("close", () => activeTerminals.delete(sessionId));
       activeTerminals.set(sessionId, { type: "pipe", proc });
       return { sessionId };
     }
@@ -387,6 +390,17 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
     } else if (target.proc && target.proc.stdin && !target.proc.stdin.destroyed) {
       target.proc.stdin.write(data);
     }
+  });
+
+  runtime.ipcMain.handle("terminal:close", async (_event: unknown, sessionId: unknown) => {
+    if (typeof sessionId !== "string") return;
+    const target = activeTerminals.get(sessionId);
+    if (!target) return;
+    activeTerminals.delete(sessionId);
+    try {
+      if (target.type === "pty") target.proc.kill();
+      else target.proc.kill();
+    } catch {}
   });
 
   runtime.ipcMain.handle("terminal:resize", async (_event: unknown, sessionId: unknown, cols: unknown, rows: unknown) => {

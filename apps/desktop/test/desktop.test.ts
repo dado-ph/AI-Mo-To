@@ -201,7 +201,7 @@ describe("desktop shell", () => {
 
     expect(handle.mock.calls.map(([channel]) => channel)).toEqual([
       "workspace:default", "workspace:inspect", "workspace:listAll", "workspace:presentation", "workspace:openFolder", "workspace:create", "workspace:rename", "workspace:delete",
-      "workspace:select", "workspace:request", "versions:list", "versions:restore", "terminal:create", "terminal:write", "terminal:resize"
+      "workspace:select", "workspace:request", "versions:list", "versions:restore", "terminal:create", "terminal:write", "terminal:close", "terminal:resize"
     ]);
   });
 
