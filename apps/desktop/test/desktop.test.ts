@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import {
   openOrCreateDefaultWorkspace,
   registerDesktopIpc,
   scanAllWorkspaces,
+  workspacePresentation,
   workspaceStorageRoot,
   workspaceRootFromArgs
 } from "../src/main.js";
@@ -81,9 +82,36 @@ describe("desktop shell", () => {
     expect(preload).toContain("requestImplementation");
     expect(preload).toContain("listWorkspaceVersions");
     expect(preload).toContain("restoreWorkspaceVersion");
+    expect(preload).toContain("getWorkspacePresentation");
     expect(preload).not.toContain("records:");
     expect(preload).not.toContain("module:views");
     expect(preload).not.toContain("workspace:apply");
+  });
+
+  it("opens public workspace pages and generates a thumbnail from the same entrypoint", async () => {
+    const root = await mkdtemp(join(tmpdir(), "aimoto-presentation-"));
+    temporaryRoots.push(root);
+    await mkdir(join(root, "public"), { recursive: true });
+    await writeFile(join(root, "public", "index.html"), "<h1>Preview</h1>", "utf8");
+    const loadFile = vi.fn().mockResolvedValue(undefined);
+    const capturePage = vi.fn().mockResolvedValue({ toPNG: () => Buffer.from("png") });
+    const close = vi.fn();
+    const BrowserWindow = vi.fn().mockImplementation(function (this: object) {
+      return { loadFile, webContents: { capturePage }, close };
+    });
+
+    const presentation = await workspacePresentation(root, {
+      ipcMain: { handle: vi.fn() },
+      dialog: { showOpenDialog: vi.fn() },
+      BrowserWindow
+    });
+
+    expect(loadFile).toHaveBeenCalledWith(join(root, "public", "index.html"));
+    expect(capturePage).toHaveBeenCalledWith({ stayHidden: true });
+    expect(close).toHaveBeenCalledOnce();
+    expect(presentation.entryUrl).toContain("/public/index.html");
+    expect(presentation.thumbnailUrl).toContain("/.aimoto/thumbnail.png");
+    await expect(access(join(root, ".aimoto", "thumbnail.png"))).resolves.toBeUndefined();
   });
 
   it("does not package built-in module resources", async () => {
