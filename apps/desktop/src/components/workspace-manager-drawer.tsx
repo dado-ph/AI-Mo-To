@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import type { WorkspaceInspection } from "@ai-mo-to/engine";
 import type { DesktopWorkspaceVersion } from "../contracts.js";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog.js";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog.js";
 import { Button } from "./ui/button.js";
 import { Badge } from "./ui/badge.js";
 import {
@@ -17,7 +17,11 @@ import {
   Layers,
   Folder,
   Search,
-  RotateCcw
+  RotateCcw,
+  Settings,
+  ChevronLeft,
+  Moon,
+  Sun
 } from "lucide-react";
 
 interface WorkspaceManagerDrawerProps {
@@ -26,6 +30,8 @@ interface WorkspaceManagerDrawerProps {
   onSelectWorkspace: (workspace: WorkspaceInspection) => void;
   onRefreshWorkspaces: () => Promise<void>;
   onImportWorkspace: () => Promise<void>;
+  isDark: boolean;
+  onToggleTheme: () => void;
 }
 
 /** Interactive Hold-to-Confirm Button for safety on destructive operations */
@@ -102,9 +108,12 @@ export function WorkspaceManagerDrawer({
   workspaces,
   onSelectWorkspace,
   onRefreshWorkspaces,
-  onImportWorkspace
+  onImportWorkspace,
+  isDark,
+  onToggleTheme
 }: WorkspaceManagerDrawerProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isActionsExpanded, setIsActionsExpanded] = useState(false);
   const [search, setSearch] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
@@ -214,15 +223,24 @@ export function WorkspaceManagerDrawer({
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-2 font-medium hover:bg-accent/60">
-          <Layers className="size-4 text-primary" />
-          <span className="max-w-[140px] truncate">{activeWorkspace?.name ?? "Workspaces"}</span>
-          <Badge variant="secondary" className="ml-1 text-[10px] uppercase font-mono">
-            {workspaces.length}
-          </Badge>
-        </Button>
-      </DialogTrigger>
+      <div className="flex w-40 justify-end">
+        <div className={`flex items-center overflow-hidden rounded-full border border-border bg-card shadow-sm transition-[width,padding] duration-300 ${isActionsExpanded ? "w-40 p-1" : "w-10 p-1"}`}>
+          <div className={`flex shrink-0 items-center gap-1 overflow-hidden transition-[width,margin,opacity,transform] duration-300 ${isActionsExpanded ? "mr-1 w-[6.5rem] translate-x-0 opacity-100" : "pointer-events-none w-0 translate-x-3 opacity-0"}`}>
+            <Button variant="ghost" size="icon" className="size-8 shrink-0 rounded-full" onClick={() => setIsActionsExpanded(false)} aria-label="Collapse workspace actions" title="Collapse actions">
+              <ChevronLeft className="size-4" />
+            </Button>
+          <Button variant="ghost" size="icon" className="size-8 shrink-0 rounded-full" onClick={onToggleTheme} aria-label={isDark ? "Use light mode" : "Use dark mode"} title={isDark ? "Use light mode" : "Use dark mode"}>
+            {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+          </Button>
+            <Button variant="ghost" size="icon" className="size-8 shrink-0 rounded-full" onClick={() => setIsOpen(true)} aria-label={`Open workspaces (${workspaces.length})`} title="Workspaces">
+              <Layers className="size-4 text-primary" />
+            </Button>
+          </div>
+          <Button variant="ghost" size="icon" className="size-8 shrink-0 rounded-full text-foreground hover:bg-accent" onClick={() => setIsActionsExpanded(value => !value)} aria-label={isActionsExpanded ? "Collapse workspace actions" : "Open workspace actions"} title="Workspace actions">
+            <Settings aria-hidden="true" className={`aimoto-cog size-4 text-foreground transition-transform duration-300 ${isActionsExpanded ? "rotate-90" : "rotate-0"}`} />
+          </Button>
+        </div>
+      </div>
 
       <DialogContent className="fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-md flex-col border-l border-border/80 bg-background/95 p-0 shadow-2xl backdrop-blur-lg">
         {/* Drawer Header */}
