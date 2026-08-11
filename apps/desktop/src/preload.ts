@@ -31,6 +31,7 @@ export function exposeDesktopApi(bridge: ElectronBridge): void {
     requestImplementation: (root, request) => bridge.ipcRenderer.invoke("workspace:request", root, request) as ReturnType<DesktopApi["requestImplementation"]>,
     listWorkspaceVersions: (root) => bridge.ipcRenderer.invoke("versions:list", root) as ReturnType<DesktopApi["listWorkspaceVersions"]>,
     restoreWorkspaceVersion: (root, versionId) => bridge.ipcRenderer.invoke("versions:restore", root, versionId) as ReturnType<DesktopApi["restoreWorkspaceVersion"]>,
+    invokeWorkspaceAction: (root, action, input) => bridge.ipcRenderer.invoke("workspace:action", root, action, input) as ReturnType<DesktopApi["invokeWorkspaceAction"]>,
     createTerminal: (root) => bridge.ipcRenderer.invoke("terminal:create", root) as ReturnType<DesktopApi["createTerminal"]>,
     writeTerminal: (sessionId, data) => bridge.ipcRenderer.invoke("terminal:write", sessionId, data) as ReturnType<DesktopApi["writeTerminal"]>,
     closeTerminal: (sessionId) => bridge.ipcRenderer.invoke("terminal:close", sessionId) as ReturnType<DesktopApi["closeTerminal"]>,

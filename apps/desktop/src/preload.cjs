@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("aimoto", {
   requestImplementation: (root, request) => ipcRenderer.invoke("workspace:request", root, request),
   listWorkspaceVersions: (root) => ipcRenderer.invoke("versions:list", root),
   restoreWorkspaceVersion: (root, versionId) => ipcRenderer.invoke("versions:restore", root, versionId),
+  invokeWorkspaceAction: (root, action, input) => ipcRenderer.invoke("workspace:action", root, action, input),
   createTerminal: (root) => ipcRenderer.invoke("terminal:create", root),
   writeTerminal: (sessionId, data) => ipcRenderer.invoke("terminal:write", sessionId, data),
   closeTerminal: (sessionId) => ipcRenderer.invoke("terminal:close", sessionId),

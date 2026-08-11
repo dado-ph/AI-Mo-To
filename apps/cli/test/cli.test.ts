@@ -94,6 +94,19 @@ describe("aimoto CLI", () => {
     expect(json(output).data).not.toHaveProperty("proposal");
     expect(json(output).data).not.toHaveProperty("category");
     expect(json(output).data).not.toHaveProperty("stagedModule");
+    expect(json(output).data.implementationBrief.instructions).toContain("aimoto verify");
+  });
+
+  it("makes UI quality failures machine-readable and correction-ready", async () => {
+    const cwd = await temporaryDirectory();
+    await runCli(["workspace", "create", "Garden", "--root", "garden", "--json"], capture().io, { cwd });
+    const output = capture();
+    expect(await runCli(["verify", "--workspace", "garden", "--json"], output.io, { cwd })).toBe(1);
+    expect(json(output)).toMatchObject({
+      ok: true,
+      command: "verify",
+      data: { ok: false, issues: expect.arrayContaining([expect.objectContaining({ code: "UI_SHADCN_CONFIG_MISSING", remediation: expect.any(String) })]) }
+    });
   });
 
   it("rejects a request path outside the canonical AppData workspace store and gives the agent the correction", async () => {
@@ -209,7 +222,7 @@ describe("aimoto CLI", () => {
   it("returns a stable JSON error for a missing workspace", async () => {
     const cwd = await temporaryDirectory();
     const output = capture();
-    expect(await runCli(["inspect", "--json"], output.io, { cwd })).toBe(2);
+    expect(await runCli(["inspect", "--json"], output.io, { cwd, environment: { LOCALAPPDATA: join(cwd, "local-app-data") } })).toBe(2);
     expect(json(output)).toMatchObject({ ok: false, command: "inspect", error: { code: "WorkspaceNotFound" } });
     expect(output.stderr).toEqual([]);
   });

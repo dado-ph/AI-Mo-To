@@ -70,6 +70,10 @@ function slugify(value: string): string {
   return `workspace-${slug || "local"}`.slice(0, 64);
 }
 
+function requiresHostAction(request: string): boolean {
+  return /\b(?:operating system|\bos\b|windows|powershell|python|script|filesystem|file system|shell|process|command|external (?:api|service)|webhook)\b/i.test(request);
+}
+
 /**
  * Selects guidance from explicit workspace context only. The user's request is
  * deliberately not an input, so keywords cannot select an application type.
@@ -86,8 +90,10 @@ export function selectImplementationRules(input: {
   const rules = [
     `Work directly beneath the canonical workspace root: ${input.workspaceRoot}.`,
     "Do not write application files inside .aimoto/versions; that directory is reserved for explicit user-approved captures.",
-    "Implement a real interactive UI with connected callbacks or scripts, suitable first-use, empty, loading, and error states, and only the files this workspace needs. Put its launch page at index.html, ui/index.html, or public/index.html so AI-Mo-To can open it and generate a thumbnail. Keep every asset referenced by that page beneath the workspace root.",
-    "Use Shadcn components where suitable, and verify the requested interface and behavior before reporting completion or asking whether to create a version.",
+    "Implement a real interactive UI with connected callbacks or scripts, suitable first-use, empty, loading, validation, success, cancellation, and error states, and only the files this workspace needs. Put its launch page at index.html, ui/index.html, or public/index.html so AI-Mo-To can open it and generate a thumbnail. Keep every asset referenced by that page beneath the workspace root.",
+    "Treat domain state as durable: records, settings, files, queued work, and other user-visible results must be read from and written to a real workspace-owned store or service, not a hard-coded array or JavaScript memory. Browser memory is appropriate only for transient view state such as an open dialog, selected tab, or unfinished form. For example, creating a project must persist it and a later reload must read it back; it must not merely add it to an in-page list. When a requested action needs a script or host capability, include the real handler and wire it through an available integration surface. If that surface does not exist, state the limitation rather than simulating success.",
+    "When the requested outcome needs an OS, script, file, process, or external-service action, implement a declared host action. Put the declaration in aimoto.actions.json, keep its handler under scripts/, and call it from the page through window.parent.postMessage({ channel: 'aimoto.workspace-action', requestId, action, input }, '*'). Listen for the matching aimoto.workspace-action-result. Do not replace this with a browser modal, alert, timeout, localStorage-only result, or an invented success message. The handler must write one JSON object to stdout and persist any domain result before returning it.",
+    "For an interactive UI, Shadcn is required: configure components.json, use generated Shadcn primitives, and use cn() from src/lib/utils.ts for conditional styling. Meet WCAG 2.2 interaction basics: every control is keyboard-operable with visible focus, hover-only information also works on keyboard focus, pointer actions can be cancelled, drag interactions have click/tap alternatives, and pointer targets are at least 24 CSS pixels unless WCAG provides an exception. Keep copy decision-focused: do not repeat control labels or status information in explanatory paragraphs. Run `aimoto verify --workspace <workspaceRoot>` after implementation. Treat every reported issue as a required correction and rerun verification until it passes before reporting completion or asking whether to create a version.",
   ];
   const notes = input.notes.map((note) => note.trim()).filter(Boolean);
   if (notes.length > 0) rules.push(`Workspace notes:\n${notes.map((note) => `- ${note}`).join("\n")}`);
@@ -207,6 +213,10 @@ export class WorkspaceEngine {
     if (!Array.isArray(notes) || notes.some((note) => typeof note !== "string")) {
       throw new EngineError("ValidationFailed", "Workspace notes must be a JSON array of strings.");
     }
+    await writeFile(join(workspace.root, ".aimoto", "implementation-requirements.json"), JSON.stringify({
+      schemaVersion: 1,
+      requiresHostAction: requiresHostAction(request)
+    }, null, 2) + "\n", "utf8");
 
     const rules = selectImplementationRules({
       workspaceRoot: workspace.root,

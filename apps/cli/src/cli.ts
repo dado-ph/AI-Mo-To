@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
-import { EngineError, WorkspaceEngine, type ImplementationBrief, type WorkspaceInspection } from "@ai-mo-to/engine";
+import { EngineError, WorkspaceEngine, verifyWorkspaceUi, type ImplementationBrief, type WorkspaceInspection } from "@ai-mo-to/engine";
 import { JSON_ENVELOPE_VERSION, validateProtocol, type JsonEnvelope, type WorkspaceVersion } from "@ai-mo-to/protocol";
 
 import { registerWorkspace, resolveRegisteredWorkspace } from "./workspace-registry.js";
@@ -131,6 +131,7 @@ function usage(): string {
     '  aimoto workspace create "<name>" [--root <path>] [--json]',
     '  aimoto request "<plan or need>" --workspace <path> [--json]',
     "  aimoto inspect [--workspace <path>] [--json]",
+    "  aimoto verify [--workspace <path>] [--json]",
     '  aimoto version create --workspace <path> --message "<user-approved summary>" [--json]',
     "  aimoto version list --workspace <path> [--json]",
     "  aimoto version restore <version-id> --workspace <path> [--json]",
@@ -330,6 +331,11 @@ export async function runCli(args: string[], io: CliIo, dependencies: CliDepende
     } else if (args[0] === "inspect") {
       command = "inspect";
       result = await engine.inspectWorkspace(await resolveWorkspacePath(cwd, option(args, "--workspace"), environment));
+    } else if (args[0] === "verify") {
+      command = "verify";
+      const root = await resolveWorkspacePath(cwd, option(args, "--workspace"), environment);
+      await engine.inspectWorkspace(root);
+      result = await verifyWorkspaceUi(root);
     } else if (args[0] === "request") {
       command = "request";
       if (args.includes("--agent")) {
@@ -403,6 +409,9 @@ export async function runCli(args: string[], io: CliIo, dependencies: CliDepende
       io.stdout(versions.length === 0 ? "No versions have been created." : versions.map((version) => `${version.versionId}  r${version.revision}  ${version.message}`).join("\n"));
     } else if (command === "doctor") {
       io.stdout((result as { checks: DoctorCheck[] }).checks.map((check) => `${check.ok ? "PASS" : "FAIL"} ${check.id}: ${check.detail}`).join("\n"));
+    } else if (command === "verify") {
+      const report = result as { ok: boolean; issues: Array<{ code: string; message: string; remediation: string }> };
+      io.stdout(report.ok ? "PASS UI verification" : report.issues.map((issue) => `${issue.code}: ${issue.message}\nFix: ${issue.remediation}`).join("\n\n"));
     } else if (command === "open") {
       io.stdout(`Opened AI-Mo-To Desktop for ${(result as { workspace: WorkspaceInspection }).workspace.name}.`);
     } else if (typeof result === "object" && result !== null && "health" in result) {
@@ -410,7 +419,7 @@ export async function runCli(args: string[], io: CliIo, dependencies: CliDepende
     } else {
       io.stdout(JSON.stringify(result, null, 2));
     }
-    return command === "doctor" && !(result as { healthy: boolean }).healthy ? 1 : 0;
+    return (command === "doctor" && !(result as { healthy: boolean }).healthy) || (command === "verify" && !(result as { ok: boolean }).ok) ? 1 : 0;
   } catch (error) {
     const engineError = normalizeCliError(error);
     const output = envelope(command, traceId, {

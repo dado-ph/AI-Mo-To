@@ -7,6 +7,7 @@ import { exec } from "node:child_process";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { DesktopApi, DesktopWorkspaceVersion } from "./contracts.js";
+import { invokeWorkspaceAction } from "./workspace-actions.js";
 
 /** Minimal Electron-shaped API. Kept structural so the domain code stays testable without Electron. */
 interface ThumbnailImage {
@@ -315,6 +316,7 @@ export function createDesktopApi(engine: DesktopWorkspaceEngine): DesktopApi {
     requestImplementation: (root, request) => engine.prepareImplementationRequest({ root, request }),
     listWorkspaceVersions: (root) => engine.listWorkspaceVersions(root),
     restoreWorkspaceVersion: (root, versionId) => engine.restoreWorkspaceVersion(root, versionId),
+    invokeWorkspaceAction: (root, action, input) => invokeWorkspaceAction(root, action, input),
     createTerminal: async (root) => ({ sessionId: `term-stub-${root?.length ?? 0}` }),
     writeTerminal: async () => {},
     closeTerminal: async () => {},
@@ -383,6 +385,17 @@ export function registerDesktopIpc(runtime: ElectronMainRuntime, engine: Desktop
   runtime.ipcMain.handle("workspace:request", async (_event: unknown, root: unknown, request: unknown) => {
     if (typeof root !== "string" || typeof request !== "string") throw new Error("workspace root and request must be strings");
     return engine.prepareImplementationRequest({ root, request });
+  });
+  runtime.ipcMain.handle("workspace:action", async (_event: unknown, root: unknown, action: unknown, input: unknown) => {
+    if (typeof root !== "string" || typeof action !== "string" || !input || typeof input !== "object" || Array.isArray(input)) {
+      return { ok: false, code: "ACTION_REQUEST_INVALID", message: "Action requests require a workspace, name, and JSON object input." };
+    }
+    try {
+      await engine.inspectWorkspace(root);
+      return invokeWorkspaceAction(root, action, input);
+    } catch {
+      return { ok: false, code: "ACTION_WORKSPACE_INVALID", message: "The action workspace could not be verified." };
+    }
   });
   runtime.ipcMain.handle("versions:list", async (_event: unknown, root: unknown) => {
     if (typeof root !== "string") throw new Error("workspace root must be a string");
