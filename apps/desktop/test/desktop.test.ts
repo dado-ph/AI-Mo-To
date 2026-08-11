@@ -18,6 +18,7 @@ import {
   workspaceRootFromArgs
 } from "../src/main.js";
 import { exposeDesktopApi } from "../src/preload.js";
+import { invokeWorkspaceAction } from "../src/workspace-actions.js";
 
 const temporaryRoots: string[] = [];
 
@@ -37,6 +38,33 @@ describe("desktop shell", () => {
     expect(created).not.toHaveProperty("modules");
     expect(created).toMatchObject({ root, name: "Garden", revision: 0, currentVersionId: null });
     await expect(api.listWorkspaceVersions(root)).resolves.toEqual([]);
+  });
+
+  it("runs only a declared handler and returns its persisted result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "aimoto-workspace-action-"));
+    temporaryRoots.push(root);
+    await mkdir(join(root, "scripts"));
+    await writeFile(join(root, "aimoto.actions.json"), JSON.stringify({
+      schemaVersion: 1,
+      actions: [{
+        id: "state.write",
+        runtime: "node",
+        script: "scripts/write-state.mjs",
+        input: { required: ["message"], properties: { message: "string" } }
+      }]
+    }), "utf8");
+    await writeFile(join(root, "scripts", "write-state.mjs"), [
+      'import { mkdir, writeFile } from "node:fs/promises";',
+      'const chunks = []; for await (const chunk of process.stdin) chunks.push(chunk);',
+      'const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));',
+      'await mkdir("data", { recursive: true });',
+      'await writeFile("data/result.json", JSON.stringify(input));',
+      'process.stdout.write(JSON.stringify({ persisted: "data/result.json", message: input.message }));'
+    ].join("\n"), "utf8");
+
+    await expect(invokeWorkspaceAction(root, "state.write", { message: "real result" })).resolves.toEqual({ ok: true, value: { persisted: "data/result.json", message: "real result" } });
+    await expect(readFile(join(root, "data", "result.json"), "utf8")).resolves.toBe('{"message":"real result"}');
+    await expect(invokeWorkspaceAction(root, "state.unknown", {})).resolves.toMatchObject({ ok: false, code: "ACTION_NOT_DECLARED" });
   });
 
   it("returns the implementation brief without proposal fields", async () => {
@@ -59,15 +87,18 @@ describe("desktop shell", () => {
     exposeDesktopApi({ contextBridge: { exposeInMainWorld: expose }, ipcRenderer: { invoke } });
     const api = expose.mock.calls[0]?.[1] as {
       requestImplementation(root: string, request: string): Promise<unknown>;
+      invokeWorkspaceAction(root: string, action: string, input: Record<string, unknown>): Promise<unknown>;
       listWorkspaceVersions(root: string): Promise<unknown>;
       restoreWorkspaceVersion(root: string, versionId: string): Promise<unknown>;
     };
 
     void api.requestImplementation("C:/work", "Build a garden planner");
+    void api.invokeWorkspaceAction("C:/work", "system.show-error", { message: "Example" });
     void api.listWorkspaceVersions("C:/work");
     void api.restoreWorkspaceVersion("C:/work", "v1");
 
     expect(invoke).toHaveBeenCalledWith("workspace:request", "C:/work", "Build a garden planner");
+    expect(invoke).toHaveBeenCalledWith("workspace:action", "C:/work", "system.show-error", { message: "Example" });
     expect(invoke).toHaveBeenCalledWith("versions:list", "C:/work");
     expect(invoke).toHaveBeenCalledWith("versions:restore", "C:/work", "v1");
     expect(Object.keys(expose.mock.calls[0]?.[1] as object)).not.toEqual(
@@ -83,6 +114,7 @@ describe("desktop shell", () => {
     expect(preload).toContain("listWorkspaceVersions");
     expect(preload).toContain("restoreWorkspaceVersion");
     expect(preload).toContain("getWorkspacePresentation");
+    expect(preload).toContain("invokeWorkspaceAction");
     expect(preload).not.toContain("records:");
     expect(preload).not.toContain("module:views");
     expect(preload).not.toContain("workspace:apply");
@@ -229,7 +261,7 @@ describe("desktop shell", () => {
 
     expect(handle.mock.calls.map(([channel]) => channel)).toEqual([
       "workspace:default", "workspace:inspect", "workspace:listAll", "workspace:presentation", "workspace:openFolder", "workspace:create", "workspace:rename", "workspace:delete",
-      "workspace:select", "workspace:request", "versions:list", "versions:restore", "terminal:create", "terminal:write", "terminal:close", "terminal:resize"
+      "workspace:select", "workspace:request", "workspace:action", "versions:list", "versions:restore", "terminal:create", "terminal:write", "terminal:close", "terminal:resize"
     ]);
   });
 

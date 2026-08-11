@@ -66,6 +66,9 @@ describe("workspace implementation handoff", () => {
     expect(brief.instructions).toContain("Build a garden planner");
     expect(brief.instructions).toContain("prototype");
     expect(brief.instructions).toContain("public/index.html");
+    expect(brief.instructions).toContain("Treat domain state as durable");
+    expect(brief.instructions).toContain("must not merely add it to an in-page list");
+    await expect(readFile(join(root, ".aimoto", "implementation-requirements.json"), "utf8")).resolves.toContain('"requiresHostAction": false');
     expect(brief.instructions.endsWith(
       `AI-Mo-To has not built this workspace. You must now implement the workspace in ${resolve(root)}. Continue until the requested UI and functions work.`
     )).toBe(true);
@@ -109,5 +112,20 @@ describe("workspace implementation handoff", () => {
     await writeFile(join(root, "src", "app.tsx"), 'import { Button } from "@/components/ui/button"; import { cn } from "@/lib/utils"; export function App(){ return <Button className={cn("min-h-11", true && "focus-visible:ring-2")} />; }');
 
     await expect(verifyWorkspaceUi(root)).resolves.toMatchObject({ ok: true, issues: [] });
+  });
+
+  it("rejects a browser-only substitute when the implementation request requires a host action", async () => {
+    const root = await temporaryWorkspace();
+    const engine = new WorkspaceEngine();
+    await engine.createWorkspace({ root, name: "Error message" });
+    await engine.prepareImplementationRequest({ root, request: "Show a Windows OS error message with a PowerShell script" });
+    await writeFile(join(root, "app.js"), "localStorage.setItem('message', 'fake'); dialog.showModal();", "utf8");
+
+    const report = await verifyWorkspaceUi(root);
+    expect(report.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "HOST_ACTION_DECLARATION_MISSING",
+      "HOST_ACTION_BRIDGE_UNUSED",
+      "HOST_ACTION_BROWSER_SUBSTITUTE"
+    ]));
   });
 });

@@ -30,6 +30,23 @@ returns the only workspace path the agent may use for a normal workspace.
    success, cancellation, and error states. Keep copy decision-focused: do not
    repeat control labels or status information in explanatory paragraphs. Do not
    return a mockup, a plan, or documentation instead of working files.
+   Treat domain state as durable: records, settings, files, queued work, and other
+   user-visible results must be read from and written to a real workspace-owned
+   store or service, not a hard-coded array or JavaScript memory. Browser memory is
+   appropriate only for transient view state such as an open dialog, selected tab,
+   or unfinished form. For example, creating a project must persist it and a later
+   reload must read it back; it must not merely add it to an in-page list. When a
+   requested action needs a script or host capability, include the real handler and
+   wire it through an available integration surface. If that surface does not exist,
+   state the limitation rather than simulating success.
+   For an OS, script, file, process, or external-service action, declare it in
+   `aimoto.actions.json`, keep the handler below `scripts/`, and invoke it from the
+   page with `window.parent.postMessage({ channel: "aimoto.workspace-action",
+   requestId, action, input }, "*")`. Listen for the matching
+   `aimoto.workspace-action-result`. The handler reads JSON from standard input,
+   writes one JSON object to standard output, and persists domain results before it
+   returns. A browser modal, `alert`, timer, `localStorage`-only result, or invented
+   success message is not an implementation of a host action.
 5. Meet WCAG 2.2 interaction basics: every control is keyboard-operable with
    visible focus; hover-only information also works on keyboard focus; pointer
    actions can be cancelled; drag interactions have click/tap alternatives; and

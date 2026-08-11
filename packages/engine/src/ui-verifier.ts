@@ -1,5 +1,5 @@
 import { access, readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 export type UiVerificationIssue = {
   code: string;
@@ -18,10 +18,40 @@ async function exists(path: string): Promise<boolean> {
 }
 
 async function sourceFiles(root: string): Promise<string[]> {
-  const directory = join(root, "src");
-  if (!await exists(directory)) return [];
-  const entries = await readdir(directory, { recursive: true, encoding: "utf8" });
-  return entries.filter((entry) => /\.(?:tsx|ts|jsx|js)$/.test(entry)).map((entry) => join(directory, entry));
+  const entries = await readdir(root, { recursive: true, encoding: "utf8" });
+  return entries
+    .filter((entry) => /\.(?:tsx|ts|jsx|js|html)$/.test(entry))
+    .filter((entry) => !entry.split(/[\\/]/).some((part) => part === ".aimoto" || part === "node_modules" || part === "dist" || part === "build"))
+    .map((entry) => join(root, entry));
+}
+
+async function requiresHostAction(root: string): Promise<boolean> {
+  try {
+    const requirements = JSON.parse(await readFile(join(root, ".aimoto", "implementation-requirements.json"), "utf8")) as { schemaVersion?: unknown; requiresHostAction?: unknown };
+    return requirements.schemaVersion === 1 && requirements.requiresHostAction === true;
+  } catch { return false; }
+}
+
+async function verifyDeclaredActions(root: string, report: (code: string, message: string, remediation: string, standard: string) => void): Promise<boolean> {
+  const manifestPath = join(root, "aimoto.actions.json");
+  if (!await exists(manifestPath)) {
+    report("HOST_ACTION_DECLARATION_MISSING", "This request requires a host action, but the workspace has no aimoto.actions.json declaration.", "Declare the named action and its handler; do not replace it with browser-only behavior.", "AI-Mo-To host action contract");
+    return false;
+  }
+  try {
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { schemaVersion?: unknown; actions?: unknown };
+    if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.actions) || manifest.actions.length === 0) throw new Error();
+    for (const action of manifest.actions as Array<{ id?: unknown; runtime?: unknown; script?: unknown }>) {
+      if (typeof action.id !== "string" || typeof action.script !== "string" || !["node", "python", "powershell"].includes(String(action.runtime))) throw new Error();
+      const handler = resolve(root, action.script);
+      const pathFromRoot = relative(resolve(root), handler);
+      if (!pathFromRoot || pathFromRoot === ".." || pathFromRoot.startsWith(`..${sep}`) || !pathFromRoot.startsWith(`scripts${sep}`) || !await exists(handler)) throw new Error();
+    }
+    return true;
+  } catch {
+    report("HOST_ACTION_DECLARATION_INVALID", "The host-action declaration is malformed or does not point to a handler below scripts/.", "Repair aimoto.actions.json so every action has a supported runtime and an existing scripts/ handler.", "AI-Mo-To host action contract");
+    return false;
+  }
 }
 
 /**
@@ -59,6 +89,12 @@ export async function verifyWorkspaceUi(root: string): Promise<UiVerificationRep
   const files = await sourceFiles(root);
   const sources = await Promise.all(files.map(async (file) => ({ file, text: await readFile(file, "utf8") })));
   const allSource = sources.map(({ text }) => text).join("\n");
+  if (await requiresHostAction(root)) {
+    const declared = await verifyDeclaredActions(root, report);
+    const callsBridge = /aimoto\.workspace-action/.test(allSource);
+    if (!callsBridge) report("HOST_ACTION_BRIDGE_UNUSED", "This request requires a host action, but the page does not call the workspace-action bridge.", "Send a named aimoto.workspace-action message and render the returned result.", "AI-Mo-To host action contract");
+    if (!declared && /localStorage|showModal|<dialog|alert\s*\(/.test(allSource)) report("HOST_ACTION_BROWSER_SUBSTITUTE", "The workspace appears to substitute browser-only behavior for a requested host action.", "Remove the substitute and connect the declared handler through the workspace-action bridge.", "AI-Mo-To host action contract");
+  }
   if (!/components\/ui\//.test(allSource)) report("UI_SHADCN_UNUSED", "The application does not import a Shadcn component.", "Replace hand-written controls and panels with the appropriate generated Shadcn primitives.", "Shadcn component contract");
   if (!/\bcn\s*\(/.test(allSource)) report("UI_CN_UNUSED", "The application never calls cn().", "Use cn() where a component has conditional state, density, intent, or responsive classes.", "Shadcn utility contract");
   if (/error\.message/.test(allSource) || /Failed to fetch/.test(allSource)) report("UI_RAW_TRANSPORT_ERROR", "The UI can expose a raw transport error to the person using it.", "Map failures to an understandable state, cause, recovery action, and retry control; never render error.message directly.", "WCAG 2.2 SC 4.1.3 Status Messages");

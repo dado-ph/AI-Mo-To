@@ -1,4 +1,5 @@
 import type { ImplementationBrief, WorkspaceInspection } from "@ai-mo-to/engine";
+import type { WorkspaceActionResult } from "./workspace-actions.js";
 
 export interface DesktopWorkspaceVersion {
   schemaVersion: 1;
@@ -30,6 +31,7 @@ export interface DesktopApi {
   requestImplementation(root: string, request: string): Promise<ImplementationBrief>;
   listWorkspaceVersions(root: string): Promise<readonly DesktopWorkspaceVersion[]>;
   restoreWorkspaceVersion(root: string, versionId: string): Promise<DesktopWorkspaceVersion>;
+  invokeWorkspaceAction(root: string, action: string, input: Record<string, unknown>): Promise<WorkspaceActionResult>;
   createTerminal(root?: string): Promise<{ sessionId: string }>;
   writeTerminal(sessionId: string, data: string): Promise<void>;
   closeTerminal(sessionId: string): Promise<void>;
