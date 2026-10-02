@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import type { WorkspaceInspection } from "@ai-mo-to/engine";
-import type { WorkspacePresentation } from "../contracts.js";
+import type { WorkspacePresentation } from "../../contracts.js";
 
 type ActionRequest = {
   channel: "aimoto.workspace-action";
@@ -23,8 +23,13 @@ function isActionRequest(value: unknown): value is ActionRequest {
     && !Array.isArray(candidate.input);
 }
 
+export interface WorkspaceFrameProps {
+  workspace: WorkspaceInspection;
+  presentation: WorkspacePresentation;
+}
+
 /** Keeps generated workspace code inside an iframe and forwards only named action requests. */
-export function WorkspaceFrame({ workspace, presentation }: { workspace: WorkspaceInspection; presentation: WorkspacePresentation }) {
+export function WorkspaceFrame({ workspace, presentation }: WorkspaceFrameProps) {
   const frame = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
